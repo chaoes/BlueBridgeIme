@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>蓝牙输入桥 · PC</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div class="logo">⌨</div>
+      <div class="titles">
+        <div class="eyebrow">BLUETOOTH INPUT BRIDGE</div>
+        <h1 data-i18n="brand">蓝牙输入桥</h1>
+        <p data-i18n="tagline">让手机输入法为这台电脑输入文字</p>
+      </div>
+      <span class="platform">GNOME · Wayland</span>
+    </header>
+
+    <section class="status-card">
+      <div class="status-head">
+        <div class="state-line"><span id="dot" class="dot"></span><span id="state" data-i18n="stateStarting">正在启动服务…</span></div>
+        <div class="received"><span data-i18n="received">已接收</span><strong id="count">0</strong></div>
+      </div>
+      <div class="device-line">
+        <span class="label" data-i18n="deviceLabel">当前设备</span>
+        <strong id="device" data-i18n="notConnected">未连接</strong>
+        <span id="address" class="address"></span>
+      </div>
+      <p id="hint" class="hint" data-i18n="hintConnecting">正在连接后台服务。</p>
+      <div class="toggles">
+        <label class="toggle">
+          <span class="toggle-text">
+            <strong data-i18n="registrationTitle">服务注册</strong>
+            <small id="registration-note" data-i18n="registrationNoteOn">向 BlueZ 发布 RFCOMM 服务</small>
+          </span>
+          <input id="registration" type="checkbox" />
+          <span class="switch" aria-hidden="true"></span>
+        </label>
+        <label class="toggle">
+          <span class="toggle-text">
+            <strong data-i18n="autostartTitle">开机自启</strong>
+            <small data-i18n="autostartNote">登录后自动运行无界面服务</small>
+          </span>
+          <input id="autostart" type="checkbox" />
+          <span class="switch" aria-hidden="true"></span>
+        </label>
+      </div>
+      <p id="error" class="error-line" hidden></p>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <span class="step">01</span>
+        <h2 data-i18n="guideTitle">软件指引与介绍</h2>
+        <p class="intro" data-i18n="guideIntro">手机与这台电脑配对后，「蓝牙输入桥」会把手机输入的内容经蓝牙送到电脑，再粘贴到当前焦点。</p>
+        <ol class="steps">
+          <li data-i18n="guideStep1">在手机上打开应用，连接本机。</li>
+          <li data-i18n="guideStep2">把电脑的光标放进要输入的位置。</li>
+          <li data-i18n="guideStep3">在手机上打字，电脑端自动粘贴。</li>
+        </ol>
+        <button id="pairing" type="button" data-i18n="pairingButton">允许配对 3 分钟</button>
+        <p id="pairing-result" class="tiny" data-i18n="pairingHint">首次配对时使用；若系统拒绝，可在 GNOME 蓝牙设置中开启。</p>
+      </article>
+
+      <article class="card">
+        <span class="step">02</span>
+        <h2 data-i18n="testTitle">测试输入框</h2>
+        <p class="intro" data-i18n="testIntro">用来试打字，确认键盘和输入法正常。内容只留在本窗口，不会发送，也不会粘贴到别处。</p>
+        <textarea id="test-text" data-i18n-placeholder="testPlaceholder" placeholder="在这里试打字…" spellcheck="false"></textarea>
+      </article>
+    </section>
+
+    <footer>
+      <span><span data-i18n="footerMethod">输入方式</span>：<span id="method">…</span></span>
+      <span data-i18n="footerPrivacy">不保存收到的文本 · 服务与界面分离</span>
+    </footer>
+  </main>
+  <script src="main.js"></script>
+</body>
+</html>
