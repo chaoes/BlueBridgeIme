@@ -3,6 +3,17 @@ plugins {
   alias(libs.plugins.compose.compiler)
 }
 
+// Release signing comes from environment variables so the keystore never enters
+// the repository. CI decodes ANDROID_KEYSTORE_BASE64 into a temporary file and
+// exports ANDROID_KEYSTORE_FILE before calling assembleRelease; see
+// .github/workflows/build.yml and README「发布签名」.
+val signingKeystorePath: String? = System.getenv("ANDROID_KEYSTORE_FILE")
+val releaseSigningReady = !signingKeystorePath.isNullOrBlank() && file(signingKeystorePath).exists()
+
+if (!signingKeystorePath.isNullOrBlank() && !releaseSigningReady) {
+  throw GradleException("ANDROID_KEYSTORE_FILE 指向的密钥库不存在：$signingKeystorePath")
+}
+
 android {
   namespace = "com.example.bluetoothinputbridge"
   compileSdk = 36
@@ -14,9 +25,28 @@ android {
     versionName = "1.0"
   }
 
+  signingConfigs {
+    if (releaseSigningReady) {
+      create("release") {
+        storeFile = file(signingKeystorePath!!)
+        storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+        keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+        keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+      }
+    }
+  }
+
   buildTypes {
     release {
       isMinifyEnabled = false
+      // Without a configured keystore (local builds, fork PRs) fall back to the
+      // debug key so the release variant still produces an installable APK.
+      signingConfig = if (releaseSigningReady) {
+        signingConfigs.getByName("release")
+      } else {
+        logger.warn("未配置 ANDROID_KEYSTORE_FILE，release 变体将使用 debug 签名")
+        signingConfigs.getByName("debug")
+      }
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
     }
   }

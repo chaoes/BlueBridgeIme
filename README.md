@@ -54,7 +54,7 @@ sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev
 
 | 作业 | 平台 | 内容 |
 | --- | --- | --- |
-| `android` | ubuntu-latest | JDK 21 + Android SDK 36，`assembleDebug`，上传 `android-apk` |
+| `android` | ubuntu-latest | JDK 21 + Android SDK 36；配了签名 Secrets 时 `assembleRelease` 并校验签名，否则 `assembleDebug`，上传 `android-apk` |
 | `desktop` | ubuntu-24.04 | WebKitGTK 依赖 + stable Rust，`cargo build --locked --release --bins`，跑协议单元测试，上传 `desktop-linux` |
 | `windows` | windows-latest | **占位**：只在手动触发且勾选 `build_windows` 时运行，构建出的是未接通后端的 exe |
 | `release` | ubuntu-24.04 | 推送 `v*` 标签时，把 APK 和 Linux `.tar.gz` 发到 Release |
@@ -72,4 +72,4 @@ git tag v0.2.0
 git push origin main --tags
 ```
 
-APK 使用 debug 签名，可直接安装测试；正式分发需要自己的 keystore（放进仓库 Secrets，并在 `android` 作业里增加 `assembleRelease`）。
+APK 默认使用 debug 签名，可直接安装测试。要发正式签名的包，在仓库 Secrets 里配置 `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD` 四项，工作流会自动改跑 `assembleRelease`、校验证书并把签名 APK 附到 Release；生成 keystore 与配置步骤见 [android/README.md](android/README.md#发布签名)。

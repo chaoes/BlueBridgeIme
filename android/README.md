@@ -26,7 +26,43 @@ APK：`app/build/outputs/apk/debug/app-debug.apk`。最低 Android 8.0（API 26�
 
 ## 持续集成
 
-仓库根目录的 [build.yml](../../.github/workflows/build.yml) 会构建本目录：Ubuntu + JDK 21（Temurin）+ Android SDK 36，执行 `./gradlew assembleDebug`，APK 以 `android-apk` 名字上传（保留 30 天）；推送 `v*` 标签时附到 Release。
+仓库根目录的 [build.yml](../../.github/workflows/build.yml) 会构建本目录：Ubuntu + JDK 21（Temurin）+ Android SDK 36。配置了签名 Secrets 时执行 `assembleRelease` 并校验签名，否则执行 `assembleDebug`；APK 以 `android-apk` 名字上传（保留 30 天），推送 `v*` 标签时附到 Release。签名方法见下一节。
 
-APK 使用 debug 签名，可直接安装测试；正式分发需要自己的 keystore：把它放进仓库 Secrets，再在工作流里加一个 `assembleRelease` 步骤。
+## 发布签名
+
+`release` 变体的签名材料全部从环境变量读取，keystore 不进仓库：
+
+| 变量 | 含义 |
+| --- | --- |
+| `ANDROID_KEYSTORE_FILE` | keystore 文件路径（CI 中解码到 `$RUNNER_TEMP/release.keystore`） |
+| `ANDROID_KEYSTORE_PASSWORD` | keystore 密码 |
+| `ANDROID_KEY_ALIAS` | 密钥别名 |
+| `ANDROID_KEY_PASSWORD` | 密钥密码 |
+
+生成一个 keystore（只做一次，妥善备份；丢失后无法给已安装用户升级）：
+
+```bash
+keytool -genkeypair -v -keystore release.keystore -alias bluetooth-bridge \
+  -keyalg RSA -keysize 2048 -validity 10000
+base64 -w0 release.keystore          # macOS: base64 -i release.keystore | tr -d '\n'
+```
+
+本地签名构建：
+
+```bash
+export ANDROID_KEYSTORE_FILE=$PWD/release.keystore
+export ANDROID_KEYSTORE_PASSWORD='...'
+export ANDROID_KEY_ALIAS=bluetooth-bridge
+export ANDROID_KEY_PASSWORD='...'
+./gradlew assembleRelease           # app/build/outputs/apk/release/app-release.apk
+```
+
+GitHub 仓库 → Settings → Secrets and variables → Actions，添加四个 secret：
+
+- `ANDROID_KEYSTORE_BASE64`：上面 `base64` 输出的单行文本
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
+
+工作流检测到 `ANDROID_KEYSTORE_BASE64` 后：解码到临时文件 → `assembleRelease` → 用 `apksigner verify --print-certs` 校验并打印证书 → 上传 `bluetooth-input-bridge-<ref>-release.apk`。**没有**该 secret 时（fork PR、本地默认）仍构建 debug APK，文件名带 `-debug`。未配置变量时 `release` 变体自动回退 debug 签名，保证 `assembleRelease` 始终能产出可安装包。
 
