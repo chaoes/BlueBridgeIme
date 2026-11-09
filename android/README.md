@@ -30,39 +30,47 @@ APK：`app/build/outputs/apk/debug/app-debug.apk`。最低 Android 8.0（API 26�
 
 ## 发布签名
 
-`release` 变体的签名材料全部从环境变量读取，keystore 不进仓库：
+工作副本里已经生成了一套本地签名材料，**不进 git**：
 
-| 变量 | 含义 |
+```
+android/keystore/release.keystore        # PKCS12 keystore，别名 bluetooth-bridge
+android/keystore/keystore.properties     # storeFile / 密码 / 别名
+android/keystore/keystore-base64.txt     # 给 GitHub Secrets 用的单行 base64
+```
+
+`android/.gitignore` 已忽略 `/keystore/`。**请单独备份这个目录**：keystore 丢失后，已安装用户无法覆盖升级（签名不一致）。
+
+gradle 的取用顺序（`app/build.gradle.kts`）：
+
+1. 环境变量 `ANDROID_KEYSTORE_FILE` + 密码/别名（CI 用）；
+2. `android/keystore/keystore.properties`（本地，自动读取）；
+3. 都没有 → release 回退 debug 签名。
+
+本地直接构建即可，不需要导出环境变量：
+
+```bash
+./gradlew assembleRelease     # app/build/outputs/apk/release/app-release.apk
+```
+
+### 配到 GitHub Actions
+
+仓库 → Settings → Secrets and variables → Actions，添加：
+
+| Secret | 值 |
 | --- | --- |
-| `ANDROID_KEYSTORE_FILE` | keystore 文件路径（CI 中解码到 `$RUNNER_TEMP/release.keystore`） |
-| `ANDROID_KEYSTORE_PASSWORD` | keystore 密码 |
-| `ANDROID_KEY_ALIAS` | 密钥别名 |
-| `ANDROID_KEY_PASSWORD` | 密钥密码 |
+| `ANDROID_KEYSTORE_BASE64` | `android/keystore/keystore-base64.txt` 的全部内容（单行） |
+| `ANDROID_KEYSTORE_PASSWORD` | `keystore.properties` 里的 `storePassword` |
+| `ANDROID_KEY_ALIAS` | `bluetooth-bridge` |
+| `ANDROID_KEY_PASSWORD` | `keystore.properties` 里的 `keyPassword` |
 
-生成一个 keystore（只做一次，妥善备份；丢失后无法给已安装用户升级）：
+工作流检测到 `ANDROID_KEYSTORE_BASE64` 后：解码到临时文件 → `assembleRelease` → 用 `apksigner verify --print-certs` 校验并打印证书 → 上传 `bluetooth-input-bridge-<ref>-release.apk`。**没有**该 secret（fork PR）时仍构建 debug APK，文件名带 `-debug`。
 
-```bash
-keytool -genkeypair -v -keystore release.keystore -alias bluetooth-bridge \
-  -keyalg RSA -keysize 2048 -validity 10000
-base64 -w0 release.keystore          # macOS: base64 -i release.keystore | tr -d '\n'
-```
-
-本地签名构建：
+### 换一套签名材料（可选）
 
 ```bash
-export ANDROID_KEYSTORE_FILE=$PWD/release.keystore
-export ANDROID_KEYSTORE_PASSWORD='...'
-export ANDROID_KEY_ALIAS=bluetooth-bridge
-export ANDROID_KEY_PASSWORD='...'
-./gradlew assembleRelease           # app/build/outputs/apk/release/app-release.apk
+keytool -genkeypair -v -keystore android/keystore/release.keystore -storetype PKCS12 \
+  -alias bluetooth-bridge -keyalg RSA -keysize 2048 -validity 10000
+base64 -w0 android/keystore/release.keystore > android/keystore/keystore-base64.txt
 ```
 
-GitHub 仓库 → Settings → Secrets and variables → Actions，添加四个 secret：
-
-- `ANDROID_KEYSTORE_BASE64`：上面 `base64` 输出的单行文本
-- `ANDROID_KEYSTORE_PASSWORD`
-- `ANDROID_KEY_ALIAS`
-- `ANDROID_KEY_PASSWORD`
-
-工作流检测到 `ANDROID_KEYSTORE_BASE64` 后：解码到临时文件 → `assembleRelease` → 用 `apksigner verify --print-certs` 校验并打印证书 → 上传 `bluetooth-input-bridge-<ref>-release.apk`。**没有**该 secret 时（fork PR、本地默认）仍构建 debug APK，文件名带 `-debug`。未配置变量时 `release` 变体自动回退 debug 签名，保证 `assembleRelease` 始终能产出可安装包。
-
+再同步 `keystore.properties` 里的密码即可。

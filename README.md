@@ -72,4 +72,4 @@ git tag v0.2.0
 git push origin main --tags
 ```
 
-APK 默认使用 debug 签名，可直接安装测试。要发正式签名的包，在仓库 Secrets 里配置 `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD` 四项，工作流会自动改跑 `assembleRelease`、校验证书并把签名 APK 附到 Release；生成 keystore 与配置步骤见 [android/README.md](android/README.md#发布签名)。
+本地 `assembleRelease` 会自动使用 `android/keystore/`（已 gitignore）里的签名材料；要发正式包到 GitHub Release，把该目录里的 base64、密码、别名配成 `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD` 四个 Secrets，工作流就会改跑 `assembleRelease`、校验证书并附上签名 APK。细节见 [android/README.md](android/README.md#发布签名)。
