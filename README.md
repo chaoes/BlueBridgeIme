@@ -18,14 +18,14 @@
 - **桌面端**：Rust（BlueZ / zbus、tokio）实现蓝牙服务与文字注入；Tauri 2 做薄外壳，前端为原生 HTML/CSS/JS。
 - **输入注入**：Linux Wayland 下用 `wl-copy` 写剪贴板 + `/dev/uinput` 虚拟键盘发 Ctrl+V，粘贴后还原原剪贴板。
 - **进程间通信**：桌面端界面 ↔ 服务走 `$XDG_RUNTIME_DIR` 下的 Unix socket，JSON 行协议，状态订阅推送。
-- **构建与 CI**：Gradle、Cargo、GitHub Actions（APK + Linux 二进制，可选发布签名）。
+- **构建与 CI**：Gradle、Cargo、GitHub Actions（APK、Linux 二进制、.deb、Arch 包，可选发布签名）。
 
 ## 已支持的平台
 
 | 平台 | 状态 | 说明 |
 | --- | --- | --- |
 | Android 8.0+（API 26+） | ✅ 支持 | 手机端，需要经典蓝牙（非 BLE） |
-| Linux x86_64（BlueZ + GNOME Wayland） | ✅ 支持 | 桌面端，含无界面服务与开机自启 |
+| Linux x86_64（BlueZ + GNOME Wayland） | ✅ 支持 | 桌面端，含无界面服务与开机自启；提供 .deb、Arch 包与免安装 tarball |
 | Windows | 🚧 预留 | 界面与 CI 构建位已留好，蓝牙与注入后端尚未实现 |
 | macOS | ❌ 未支持 | — |
 
