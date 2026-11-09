@@ -5,6 +5,11 @@
 -- JSON, non-blocking reads on the LÖVE main thread.
 local json = require('src.json')
 
+local DEBUG = os.getenv('BLUETOOTH_INPUT_BRIDGE_DEBUG') == '1'
+local function log(...)
+  if DEBUG then print('[service]', ...) end
+end
+
 local Service = {
   connected = false,
   status = nil,
@@ -83,6 +88,7 @@ local function close_socket()
 end
 
 local function mark_down(reason)
+  log('down:', reason)
   if Service.connected then
     Service.connected = false
     Service.onConnection(false, reason)
@@ -104,6 +110,7 @@ local function try_connect()
   local len = ffi.sizeof('sa_family_t') + #path + 1
   if ffi.C.connect(sock, addr, len) ~= 0 then
     ffi.C.close(sock)
+    log('connect failed', path)
     return false
   end
 
@@ -112,6 +119,7 @@ local function try_connect()
   local flags = ffi.C.fcntl(fd, F_GETFL)
   if flags >= 0 then ffi.C.fcntl(fd, F_SETFL, ffi.cast('int', bit.bor(flags, O_NONBLOCK))) end
 
+  log('connected')
   Service.connected = true
   last_error = nil
   Service.onConnection(true)
@@ -219,6 +227,7 @@ end
 
 local function handle_line(line)
   if line == '' then return end
+  log('line', line:sub(1, 90))
   local ok, message = pcall(json.decode, line)
   if not ok or type(message) ~= 'table' then return end
   strip_nulls(message)
@@ -299,6 +308,7 @@ function Service.spawn()
   local binary = find_service_binary()
   if not binary then return false end
   local command = string.format("nohup %q >/dev/null 2>&1 &", binary)
+  log('spawn', binary)
   os.execute(command)
   Service.spawned = binary
   return true

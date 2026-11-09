@@ -139,6 +139,15 @@ end
 function love.update(dt)
   Service.update(dt)
   local now = love.timer.getTime()
+  -- 这两条提示按时间消失；没有这一句，界面会停在旧帧。
+  if error_text and now - error_at >= 10 then
+    error_text = nil
+    mark_dirty()
+  end
+  if pairing_message and now - pairing_at >= 8 then
+    pairing_message = nil
+    mark_dirty()
+  end
   if busy_deadline > 0 and now > busy_deadline then
     busy.registration, busy.autostart, busy.pairing = false, false, false
     busy_deadline = 0
