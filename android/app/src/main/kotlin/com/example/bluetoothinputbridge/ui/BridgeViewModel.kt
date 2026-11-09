@@ -36,7 +36,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
-private val SERVICE_UUID: UUID = UUID.fromString("e8b6a86a-73ce-4cbb-9ea8-9f9c2fae6d51")
+private val SERVICE_UUID: UUID = UUID.fromString("0000e8b6-0000-1000-8000-00805f9b34fb")
 private const val MAX_TEXT_BYTES = 16 * 1024
 private const val CONNECT_TIMEOUT_MILLIS = 8_000L
 private const val AUTO_CONNECT_TIMEOUT_MILLIS = 5_000L

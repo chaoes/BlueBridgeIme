@@ -30,13 +30,17 @@ pub struct Reply {
 }
 
 fn parse_reply(line: &str) -> Result<Reply, String> {
-    let value: Value = serde_json::from_str(line).map_err(|error| format!("服务响应格式错误: {error}"))?;
+    let value: Value =
+        serde_json::from_str(line).map_err(|error| format!("服务响应格式错误: {error}"))?;
     Ok(Reply {
         ok: value.get("ok").and_then(Value::as_bool).unwrap_or(false),
         status: value
             .get("status")
             .and_then(|status| serde_json::from_value(status.clone()).ok()),
-        error: value.get("error").and_then(Value::as_str).map(str::to_owned),
+        error: value
+            .get("error")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     })
 }
 
@@ -55,7 +59,10 @@ pub async fn call(command: &str, payload: Value) -> Result<Reply, String> {
     fields.insert("cmd".to_string(), Value::String(command.to_string()));
     let mut line = serde_json::to_vec(&Value::Object(fields)).map_err(|error| error.to_string())?;
     line.push(b'\n');
-    stream.write_all(&line).await.map_err(|error| error.to_string())?;
+    stream
+        .write_all(&line)
+        .await
+        .map_err(|error| error.to_string())?;
     stream.flush().await.map_err(|error| error.to_string())?;
     let mut reader = BufReader::new(stream);
     let mut response = String::new();

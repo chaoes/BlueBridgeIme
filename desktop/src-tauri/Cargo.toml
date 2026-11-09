@@ -31,5 +31,30 @@ evdev = "0.13.2"
 libc = "0.2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+# Windows 后端：Win32 WinSock 蓝牙 RFCOMM（AF_BTH + WSASetService）+ SendInput 注入
+# + 命名管道控制通道。
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+windows-future = "0.3.2"
+windows = { version = "0.62.2", features = [
+    "Foundation",
+    "Win32_Devices_Bluetooth",
+    "Win32_Foundation",
+    "Win32_Networking_WinSock",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Pipes",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_System_StationsAndDesktops",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 [build-dependencies]
 tauri-build = { version = "2.7.4" }

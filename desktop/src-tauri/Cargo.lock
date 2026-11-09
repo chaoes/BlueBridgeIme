@@ -310,6 +310,8 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tokio",
+ "windows",
+ "windows-future",
  "zbus",
  "zvariant",
 ]

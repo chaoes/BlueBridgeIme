@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 
-pub const SERVICE_UUID: &str = "e8b6a86a-73ce-4cbb-9ea8-9f9c2fae6d51";
+pub const SERVICE_UUID: &str = "0000e8b6-0000-1000-8000-00805f9b34fb";
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 pub const MAX_TEXT_BYTES: usize = 16 * 1024;
 

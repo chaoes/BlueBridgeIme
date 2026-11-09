@@ -1,4 +1,4 @@
-name: Build
+﻿name: Build
 
 on:
   push:
@@ -6,11 +6,6 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
-    inputs:
-      build_windows:
-        description: "构建 Windows 占位版（后端尚未实现，见 desktop/docs/windows.md）"
-        type: boolean
-        default: false
 
 concurrency:
   group: build-${{ github.ref }}
@@ -147,11 +142,10 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # Windows 后端尚未实现，这里先把构建位留好。实现完成后：
-  # 1. 去掉 `if` 条件，让 push/PR 也构建；2. 视情况把 exe 一起发 Release。
+  # Windows 后端：Win32 蓝牙 RFCOMM（AF_BTH + WSASetService）+ SendInput 文字注入，
+  # 实现说明见 desktop/docs/windows.md。
   windows:
-    name: Windows (placeholder)
-    if: ${{ inputs.build_windows }}
+    name: Windows
     runs-on: windows-latest
     timeout-minutes: 45
     defaults:
@@ -169,18 +163,21 @@ jobs:
         with:
           workspaces: desktop/src-tauri -> target
 
-      - name: Build placeholder binaries
+      - name: Build binaries
         run: cargo build --locked --release --manifest-path src-tauri/Cargo.toml --bins
 
-      - name: Upload placeholder binaries
+      - name: Run unit tests
+        run: cargo test --locked --lib --manifest-path src-tauri/Cargo.toml
+
+      - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-windows-placeholder
+          name: desktop-windows
           path: |
             desktop/src-tauri/target/release/bluetooth-input-desktop.exe
             desktop/src-tauri/target/release/bluetooth-input-bridge-service.exe
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
 
   release:
     name: Release

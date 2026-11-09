@@ -1,4 +1,4 @@
-# BlueBridgeIme · 蓝牙输入桥
+﻿# BlueBridgeIme · 蓝牙输入桥
 
 用手机当电脑键盘：手机连着电脑的蓝牙，打字时电脑当前光标处直接出现文字，不用装接收器、不用连同一个 Wi-Fi，也不用切换窗口。
 
@@ -14,11 +14,11 @@
 
 ## 技术栈
 
-- **Android**：Kotlin、Jetpack Compose、Material 3；经典蓝牙 RFCOMM（`e8b6a86a-73ce-4cbb-9ea8-9f9c2fae6d51`），JSON 行协议，逐条回执。
-- **桌面端**：Rust（BlueZ / zbus、tokio）实现蓝牙服务与文字注入；Tauri 2 做薄外壳，前端为原生 HTML/CSS/JS。
-- **输入注入**：Linux Wayland 下用 `wl-copy` 写剪贴板 + `/dev/uinput` 虚拟键盘发 Ctrl+V，粘贴后还原原剪贴板。
-- **进程间通信**：桌面端界面 ↔ 服务走 `$XDG_RUNTIME_DIR` 下的 Unix socket，JSON 行协议，状态订阅推送。
-- **构建与 CI**：Gradle、Cargo、GitHub Actions（APK + Linux 二进制，可选发布签名）。
+- **Android**：Kotlin、Jetpack Compose、Material 3；经典蓝牙 RFCOMM（`0000e8b6-0000-1000-8000-00805f9b34fb`），JSON 行协议，逐条回执。
+- **桌面端**：Rust + tokio 实现蓝牙服务与文字注入；Tauri 2 做薄外壳，前端为原生 HTML/CSS/JS。Linux 用 BlueZ / zbus，Windows 用 Win32 蓝牙 Winsock（`AF_BTH` + `WSASetService`）。
+- **输入注入**：Linux Wayland 下用 `wl-copy` 写剪贴板 + `/dev/uinput` 虚拟键盘发 Ctrl+V，粘贴后还原原剪贴板；Windows 下用 `SendInput` + `KEYEVENTF_UNICODE` 把字符事件直接送进前台焦点控件，不碰剪贴板。
+- **进程间通信**：桌面端界面 ↔ 服务，Linux 走 `$XDG_RUNTIME_DIR` 下的 Unix socket、Windows 走命名管道 `\\.\pipe\bluetooth-input-bridge-control`，同为 JSON 行协议，状态订阅推送。
+- **构建与 CI**：Gradle、Cargo、GitHub Actions（APK + Linux/Windows 二进制，可选发布签名）。
 
 ## 已支持的平台
 
@@ -26,7 +26,7 @@
 | --- | --- | --- |
 | Android 8.0+（API 26+） | ✅ 支持 | 手机端，需要经典蓝牙（非 BLE） |
 | Linux x86_64（BlueZ + GNOME Wayland） | ✅ 支持 | 桌面端，含无界面服务与开机自启 |
-| Windows | 🚧 预留 | 界面与 CI 构建位已留好，蓝牙与注入后端尚未实现 |
+| Windows 10/11 x64 | ✅ 支持 | 桌面端，Win32 蓝牙 RFCOMM + SendInput 直输（不经过剪贴板），含无界面服务与开机自启 |
 | macOS | ❌ 未支持 | — |
 
 ## 许可证

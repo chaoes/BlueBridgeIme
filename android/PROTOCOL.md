@@ -5,7 +5,7 @@
 安卓端是**经典蓝牙 BR/EDR RFCOMM 客户端**，Windows 端是 RFCOMM 服务端。Windows 先启动监听并发布 SDP 服务记录，安卓端扫描或从已配对列表选择电脑，调用 `createRfcommSocketToServiceRecord(UUID)` 连接。仅有 BLE 的设备不适用。
 
 - 服务名称建议：`Bluetooth Input Bridge`
-- 服务 UUID：`e8b6a86a-73ce-4cbb-9ea8-9f9c2fae6d51`
+- 服务 UUID：`0000e8b6-0000-1000-8000-00805f9b34fb`
 - 安全：使用配对和加密的 RFCOMM 服务；Windows 只接受已授权设备。
 - 连接方式：一条双向字节流，安卓主动发起；无需固定 RFCOMM channel，也没有 IP 端口。
 - Windows 必须发布与上述 UUID 匹配的 SDP 服务，否则安卓连接会失败。

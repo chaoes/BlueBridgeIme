@@ -1,8 +1,17 @@
-//! Headless Bluetooth bridge service plus its local control-socket client.
+//! Backend: one Linux implementation and one Windows implementation behind the
+//! same control protocol and status structure.
 //!
-//! `linux` owns the BlueZ profile, RFCOMM session and text injection. `client`
-//! is the only view the Tauri shell has of it, so replacing the webview stack
-//! does not require touching the service.
+//! - `client`: the shell-side client (Unix socket on Linux, named pipe on Windows);
+//! - `linux`: BlueZ profile + `wl-copy`/`uinput` injection;
+//! - `win`: WinRT RFCOMM + `SendInput` injection (see the table at the top of
+//!   `win/mod.rs`).
+//!
+//! The Tauri shell only ever sees the `client` API, so swapping the webview stack
+//! never requires touching a backend.
 
+#[cfg(unix)]
 pub mod client;
+#[cfg(target_os = "linux")]
 pub mod linux;
+#[cfg(target_os = "windows")]
+pub mod win;
