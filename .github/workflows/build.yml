@@ -43,11 +43,13 @@ jobs:
           java-version: "21"
           cache: gradle
 
+      # 默认的 `packages: 'tools platform-tools'` 仍会执行 `sdkmanager tools`，
+      # 而 SDK 仓库里早已没有 `tools` 包（Failed to find package 'tools'）。
+      # 显式列出需要的包，顺带完成 SDK 许可证接受。
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-
-      - name: Install SDK platform and build tools
-        run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+        with:
+          packages: "platform-tools platforms;android-36 build-tools;36.0.0"
 
       # 仓库 Secrets 里配了 ANDROID_KEYSTORE_BASE64 才会走 release 签名；
       # 否则（本地、fork PR）构建 debug APK，行为与以前一致。
