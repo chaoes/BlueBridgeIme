@@ -1,0 +1,71 @@
+<resources>
+    <string name="app_name">블루투스 입력 브리지</string>
+    <string name="tagline">휴대폰 입력으로 PC에 입력</string>
+
+    <string name="connect_title">PC에 연결</string>
+    <string name="status_ready">준비됨</string>
+    <string name="status_preparing">자동 연결 준비 중…</string>
+    <string name="status_connecting_secure">안전한 블루투스 연결을 설정하는 중…</string>
+    <string name="status_unsupported">이 기기는 클래식 블루투스를 지원하지 않습니다.</string>
+    <string name="status_permissions">주변 기기 권한이 필요합니다. 구형 Android에서는 검색에 위치 권한도 필요합니다.</string>
+    <string name="action_grant">권한 허용</string>
+    <string name="status_bluetooth_off">블루투스를 켜면 페어링된 PC에 연결할 수 있습니다.</string>
+    <string name="action_enable_bluetooth">블루투스 켜기</string>
+    <string name="action_searching">검색 중…</string>
+    <string name="action_search">주변 기기 검색</string>
+    <string name="action_back_to_input">입력으로 돌아가기</string>
+    <string name="device_list">기기 목록</string>
+    <string name="device_list_subtitle">이 앱에서 최근 연결한 순서(최신순)</string>
+    <string name="device_list_empty">기기가 없습니다. 위의 검색 버튼을 누르세요.</string>
+    <string name="device_list_footer">PC에서 RFCOMM 서비스가 실행 중이어야 하며, 페어링되지 않은 기기는 검색 가능 상태여야 합니다.</string>
+    <string name="bonded">페어링됨</string>
+    <string name="nearby">주변</string>
+    <string name="just_now">방금</string>
+
+    <string name="last_device">마지막으로 연결한 기기</string>
+    <string name="action_devices">기기</string>
+    <string name="action_disconnect">연결 끊기</string>
+    <string name="action_reconnect">다시 연결</string>
+    <string name="state_connected">●  연결됨</string>
+    <string name="state_connecting">◌  연결 중</string>
+    <string name="state_disconnected">○  연결 안 됨</string>
+
+    <string name="auto_send">자동 전송</string>
+    <string name="auto_send_immediate">입력 확정 즉시 전송</string>
+    <string name="auto_send_delay">입력이 멈춘 후 %1$s초 뒤 전송</string>
+    <string name="label_now">즉시</string>
+    <string name="label_3s">3초</string>
+
+    <string name="input_title">입력 영역</string>
+    <string name="input_subtitle">PC에 전달되면 자동으로 지워짐</string>
+    <string name="input_placeholder_waiting">PC 연결을 기다리는 중…</string>
+    <string name="input_placeholder_ready">여기에 입력하거나 음성 입력을 사용하세요…</string>
+    <string name="action_send_now">지금 보내기</string>
+    <string name="action_waiting_ack">PC 응답을 기다리는 중…</string>
+
+    <string name="searching_status">주변 기기 검색 중…</string>
+    <string name="search_failed">검색을 시작하지 못했습니다. 다시 시도하세요.</string>
+    <string name="connect_auto_progress">%1$s에 자동 연결 중…</string>
+    <string name="connect_progress">%1$s에 연결 중…</string>
+    <string name="connect_attempt">%1$s에 자동 연결 중… (%2$d번째 시도)</string>
+    <string name="connected_auto">%1$s에 자동 연결됨</string>
+    <string name="connected">%1$s에 연결됨</string>
+    <string name="disconnected">연결이 끊어졌습니다</string>
+    <string name="delivered">PC에 입력됨</string>
+    <string name="input_failed">PC 입력 실패: %1$s</string>
+    <string name="unknown_error">알 수 없는 오류</string>
+    <string name="auto_connect_stopped">자동 연결을 중지했습니다. 기기를 선택하세요.</string>
+    <string name="text_too_long">텍스트가 16 KiB를 초과합니다. 줄여서 보내세요.</string>
+    <string name="sending">전송 중…</string>
+    <string name="ack_timeout">PC 응답 시간이 초과되었습니다. 확인 후 다시 보내세요.</string>
+    <string name="send_failed">전송 실패: %1$s</string>
+    <string name="connection_closed">연결이 닫혔습니다</string>
+    <string name="connect_create_failed">블루투스 연결을 만들지 못했습니다</string>
+    <string name="failure_timeout">PC가 응답하지 않습니다. 서비스가 실행 중인지 확인하세요.</string>
+    <string name="failure_refused">PC가 연결을 거부했습니다. 서비스가 실행 중인지 확인하세요.</string>
+    <string name="failure_unknown">PC 서비스가 실행 중이고 PC가 가까이 있는지 확인하세요.</string>
+    <string name="connect_failed_auto">자동 연결 실패: %1$s</string>
+    <string name="connect_failed">연결 실패: %1$s</string>
+    <string name="disconnected_manual">연결 끊김</string>
+    <string name="unnamed_device">이름 없는 기기</string>
+</resources>

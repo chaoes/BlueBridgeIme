@@ -1,0 +1,71 @@
+<resources>
+    <string name="app_name">Bluetooth Input Bridge</string>
+    <string name="tagline">Type on your phone, type on your PC</string>
+
+    <string name="connect_title">Connect to PC</string>
+    <string name="status_ready">Ready</string>
+    <string name="status_preparing">Preparing automatic connection…</string>
+    <string name="status_connecting_secure">Establishing a secure Bluetooth connection…</string>
+    <string name="status_unsupported">This device does not support Classic Bluetooth.</string>
+    <string name="status_permissions">Nearby devices permission is required. Scanning on older Android also needs location permission.</string>
+    <string name="action_grant">Grant permission</string>
+    <string name="status_bluetooth_off">Turn on Bluetooth to connect to paired PCs.</string>
+    <string name="action_enable_bluetooth">Turn on Bluetooth</string>
+    <string name="action_searching">Searching…</string>
+    <string name="action_search">Search nearby devices</string>
+    <string name="action_back_to_input">Back to input</string>
+    <string name="device_list">Devices</string>
+    <string name="device_list_subtitle">Sorted by the most recent connection in this app</string>
+    <string name="device_list_empty">No devices. Tap search above.</string>
+    <string name="device_list_footer">The PC must run the RFCOMM service; enable discoverable mode for unpaired devices.</string>
+    <string name="bonded">Paired</string>
+    <string name="nearby">Nearby</string>
+    <string name="just_now">Just now</string>
+
+    <string name="last_device">Last connected device</string>
+    <string name="action_devices">Devices</string>
+    <string name="action_disconnect">Disconnect</string>
+    <string name="action_reconnect">Reconnect</string>
+    <string name="state_connected">●  Connected</string>
+    <string name="state_connecting">◌  Connecting</string>
+    <string name="state_disconnected">○  Not connected</string>
+
+    <string name="auto_send">Auto-send</string>
+    <string name="auto_send_immediate">Sends as soon as the IME commits</string>
+    <string name="auto_send_delay">Sends %1$s s after typing stops</string>
+    <string name="label_now">Now</string>
+    <string name="label_3s">3 s</string>
+
+    <string name="input_title">Input</string>
+    <string name="input_subtitle">Cleared after the PC receives it</string>
+    <string name="input_placeholder_waiting">Waiting for the PC…</string>
+    <string name="input_placeholder_ready">Type here or use voice input…</string>
+    <string name="action_send_now">Send now</string>
+    <string name="action_waiting_ack">Waiting for the PC…</string>
+
+    <string name="searching_status">Searching for nearby devices…</string>
+    <string name="search_failed">Could not start scanning. Try again.</string>
+    <string name="connect_auto_progress">Auto-connecting to %1$s…</string>
+    <string name="connect_progress">Connecting to %1$s…</string>
+    <string name="connect_attempt">Auto-connecting to %1$s… (attempt %2$d)</string>
+    <string name="connected_auto">Auto-connected to %1$s</string>
+    <string name="connected">Connected to %1$s</string>
+    <string name="disconnected">Connection lost</string>
+    <string name="delivered">Typed on the PC</string>
+    <string name="input_failed">PC input failed: %1$s</string>
+    <string name="unknown_error">unknown error</string>
+    <string name="auto_connect_stopped">Auto-connect stopped. Choose a device.</string>
+    <string name="text_too_long">Text exceeds 16 KiB. Shorten it and try again.</string>
+    <string name="sending">Sending…</string>
+    <string name="ack_timeout">Timed out waiting for the PC. Check it and resend manually.</string>
+    <string name="send_failed">Send failed: %1$s</string>
+    <string name="connection_closed">Connection closed</string>
+    <string name="connect_create_failed">Could not create the Bluetooth connection</string>
+    <string name="failure_timeout">The PC did not respond. Make sure the service is running.</string>
+    <string name="failure_refused">The PC refused the connection. Make sure the service is running.</string>
+    <string name="failure_unknown">Make sure the PC service is running and the PC is nearby.</string>
+    <string name="connect_failed_auto">Auto-connect failed: %1$s</string>
+    <string name="connect_failed">Connection failed: %1$s</string>
+    <string name="disconnected_manual">Disconnected</string>
+    <string name="unnamed_device">Unnamed device</string>
+</resources>

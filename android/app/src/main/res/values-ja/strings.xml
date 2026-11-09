@@ -1,0 +1,71 @@
+<resources>
+    <string name="app_name">Bluetooth入力ブリッジ</string>
+    <string name="tagline">スマホの入力でPCに文字を入力</string>
+
+    <string name="connect_title">PCに接続</string>
+    <string name="status_ready">準備完了</string>
+    <string name="status_preparing">自動接続を準備中…</string>
+    <string name="status_connecting_secure">安全なBluetooth接続を確立しています…</string>
+    <string name="status_unsupported">この端末はクラシックBluetoothに対応していません。</string>
+    <string name="status_permissions">付近のデバイスの権限が必要です。古いAndroidでは検索に位置情報の権限も必要です。</string>
+    <string name="action_grant">権限を許可</string>
+    <string name="status_bluetooth_off">Bluetoothをオンにするとペアリング済みのPCに接続できます。</string>
+    <string name="action_enable_bluetooth">Bluetoothをオン</string>
+    <string name="action_searching">検索中…</string>
+    <string name="action_search">付近のデバイスを検索</string>
+    <string name="action_back_to_input">入力に戻る</string>
+    <string name="device_list">デバイス一覧</string>
+    <string name="device_list_subtitle">このアプリでの最近の接続順（新しい順）</string>
+    <string name="device_list_empty">デバイスがありません。上の検索ボタンを押してください。</string>
+    <string name="device_list_footer">PC側でRFCOMMサービスが必要です。未ペアリングの場合は検出可能にしてください。</string>
+    <string name="bonded">ペアリング済み</string>
+    <string name="nearby">付近</string>
+    <string name="just_now">たった今</string>
+
+    <string name="last_device">前回接続したデバイス</string>
+    <string name="action_devices">デバイス</string>
+    <string name="action_disconnect">切断</string>
+    <string name="action_reconnect">再接続</string>
+    <string name="state_connected">●  接続済み</string>
+    <string name="state_connecting">◌  接続中</string>
+    <string name="state_disconnected">○  未接続</string>
+
+    <string name="auto_send">自動送信</string>
+    <string name="auto_send_immediate">入力確定後すぐに送信</string>
+    <string name="auto_send_delay">入力停止から %1$s 秒後に送信</string>
+    <string name="label_now">即時</string>
+    <string name="label_3s">3秒</string>
+
+    <string name="input_title">入力エリア</string>
+    <string name="input_subtitle">PCに届くと自動で消去</string>
+    <string name="input_placeholder_waiting">PCへの接続を待っています…</string>
+    <string name="input_placeholder_ready">ここに入力するか音声入力を使ってください…</string>
+    <string name="action_send_now">今すぐ送信</string>
+    <string name="action_waiting_ack">PCの応答を待っています…</string>
+
+    <string name="searching_status">付近のデバイスを検索中…</string>
+    <string name="search_failed">検索を開始できませんでした。再試行してください。</string>
+    <string name="connect_auto_progress">%1$s に自動接続中…</string>
+    <string name="connect_progress">%1$s に接続中…</string>
+    <string name="connect_attempt">%1$s に自動接続中…（%2$d 回目）</string>
+    <string name="connected_auto">%1$s に自動接続しました</string>
+    <string name="connected">%1$s に接続しました</string>
+    <string name="disconnected">接続が切れました</string>
+    <string name="delivered">PCに入力しました</string>
+    <string name="input_failed">PCへの入力に失敗：%1$s</string>
+    <string name="unknown_error">不明なエラー</string>
+    <string name="auto_connect_stopped">自動接続を停止しました。デバイスを選択してください。</string>
+    <string name="text_too_long">テキストが16 KiBを超えています。短くしてください。</string>
+    <string name="sending">送信中…</string>
+    <string name="ack_timeout">PCの応答がタイムアウトしました。確認して再送してください。</string>
+    <string name="send_failed">送信に失敗：%1$s</string>
+    <string name="connection_closed">接続が閉じられました</string>
+    <string name="connect_create_failed">Bluetooth接続を作成できませんでした</string>
+    <string name="failure_timeout">PCが応答しません。サービスが起動しているか確認してください。</string>
+    <string name="failure_refused">PCが接続を拒否しました。サービスが起動しているか確認してください。</string>
+    <string name="failure_unknown">PCのサービスが起動していること、PCが近くにあることを確認してください。</string>
+    <string name="connect_failed_auto">自動接続に失敗：%1$s</string>
+    <string name="connect_failed">接続に失敗：%1$s</string>
+    <string name="disconnected_manual">切断しました</string>
+    <string name="unnamed_device">名前のないデバイス</string>
+</resources>
