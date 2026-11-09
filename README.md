@@ -26,8 +26,8 @@
 | --- | --- | --- |
 | Android 8.0+（API 26+） | ✅ 支持 | 手机端，需要经典蓝牙（非 BLE） |
 | Linux x86_64（BlueZ + GNOME Wayland） | ✅ 支持 | 桌面端，含无界面服务与开机自启；提供 .deb、Arch 包与免安装 tarball，另有自带服务的 LÖVE 包 |
-| Windows | 🚧 预留 | 界面与 CI 构建位已留好，蓝牙与注入后端尚未实现 |
-| macOS | ❌ 未支持 | — |
+| Windows | 🚧 预留 | Tauri / LÖVE 界面与 CI 构建位已留好，蓝牙与注入后端尚未实现 |
+| macOS | ❌ 未支持 | 仅提供 LÖVE 界面包（`love/`），无服务后端 |
 
 ## 许可证
 
