@@ -22,7 +22,7 @@
 use std::sync::Arc;
 
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::{NamedPipeServer, PipeMode, ServerOptions};
 
 use super::service::{self, Inner};
@@ -52,6 +52,7 @@ fn create_instance(first: bool, inner: &Arc<Inner>) -> std::io::Result<NamedPipe
 /// 接受连接的主循环（`stop` 置位后退出）。
 pub async fn serve(inner: Arc<Inner>) -> Result<(), String> {
     let mut first = true;
+    let mut last_logged = String::new();
     loop {
         if inner.stop.load(std::sync::atomic::Ordering::SeqCst) {
             break;
@@ -62,23 +63,37 @@ pub async fn serve(inner: Arc<Inner>) -> Result<(), String> {
                 if first {
                     return Err(format!("无法创建控制管道 {PIPE_NAME}：{error}"));
                 }
-                service::log(&format!("创建管道实例失败：{error}"));
+                // 界面每秒轮询状态，每次都是一条新连接；同一类错误只记一次。
+                log_once(&mut last_logged, format!("创建管道实例失败：{error}"));
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 continue;
             }
         };
         first = false;
         if let Err(error) = server.connect().await {
-            service::log(&format!("等待控制通道连接失败：{error}"));
+            log_once(&mut last_logged, format!("等待控制通道连接失败：{error}"));
             continue;
         }
-        service::log("控制通道已连接");
+        // 每次 `status` 都是一条新连接：逐条记录会把日志刷满，这里只记“已就绪”。
+        log_once(
+            &mut last_logged,
+            "控制通道已就绪（界面可以连了）".to_string(),
+        );
         let task_inner = inner.clone();
         tokio::spawn(async move {
             handle_connection(server, task_inner).await;
         });
     }
     Ok(())
+}
+
+/// 同类日志只写一次（文本变了才写），避免每条管道连接/每轮重试都刷一行。
+fn log_once(last: &mut String, message: String) {
+    if last == &message {
+        return;
+    }
+    service::log(&message);
+    *last = message;
 }
 
 /// 处理一个连接：一次 `status` 之类的短请求，或一条 `subscribe` 长连接。
@@ -88,7 +103,12 @@ async fn handle_connection(server: NamedPipeServer, inner: Arc<Inner>) {
     let mut line = String::new();
     loop {
         line.clear();
-        match reader.read_line(&mut line).await {
+        // 只读到 MAX_REQUEST_BYTES 为止：客户端一直不发换行时也不能让内存无上限增长。
+        let read = {
+            let mut limited = (&mut reader).take(MAX_REQUEST_BYTES as u64);
+            limited.read_line(&mut line).await
+        };
+        match read {
             Ok(0) => break, // 客户端关闭
             Ok(_) => {}
             Err(error) => {
@@ -96,7 +116,8 @@ async fn handle_connection(server: NamedPipeServer, inner: Arc<Inner>) {
                 break;
             }
         }
-        if line.len() > MAX_REQUEST_BYTES {
+        if line.len() >= MAX_REQUEST_BYTES && !line.ends_with('\n') {
+            // 超过上限还没读到行尾：回一条明确的错误再断开，后续字节不再读。
             let _ = write_json(&mut writer, &json!({ "ok": false, "error": "请求过长" })).await;
             break;
         }
@@ -130,26 +151,46 @@ async fn handle_connection(server: NamedPipeServer, inner: Arc<Inner>) {
             {
                 break;
             }
-            let mut updates = service::subscribe(&inner);
-            loop {
-                match updates.recv().await {
-                    Ok(status) => {
-                        if write_json(&mut writer, &json!({ "event": status }))
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                }
-            }
+            subscribe_loop(&mut writer, &inner).await;
             break;
         }
         let reply = service::dispatch(inner.clone(), parsed).await;
         if write_json(&mut writer, &reply).await.is_err() {
             break;
+        }
+    }
+}
+
+/// `subscribe` 长连接：推送状态变化，直到服务停止、广播信道关闭或客户端断开。
+///
+/// 没有状态变化时 `recv()` 会一直等下去，因此这里用 `select!` 同时盯住停止标志：
+/// 服务退出（`inner.stop`）时主动结束，不会留下一个只挂在长连接上的僵尸任务。
+async fn subscribe_loop<W>(writer: &mut W, inner: &Arc<Inner>)
+where
+    W: AsyncWriteExt + Unpin,
+{
+    use std::sync::atomic::Ordering;
+
+    let mut updates = service::subscribe(inner);
+    // 每 500 ms 检查一次停止标志，同时保持 `recv()` 的响应性。
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(500));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            changed = updates.recv() => match changed {
+                Ok(status) => {
+                    if write_json(writer, &json!({ "event": status })).await.is_err() {
+                        return;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+            },
+            _ = tick.tick() => {
+                if inner.stop.load(Ordering::SeqCst) {
+                    return;
+                }
+            }
         }
     }
 }

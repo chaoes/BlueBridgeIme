@@ -337,7 +337,11 @@ pub async fn dispatch(inner: Arc<Inner>, request: Value) -> Value {
                 .unwrap_or(true);
             match toggle_registration(inner.clone(), enabled).await {
                 Ok(()) => reply_ok(&inner),
-                Err(error) => reply_err(&inner, error),
+                // 失败原因要同时落在日志里：界面可能只看结果，日志是事后排查的唯一线索。
+                Err(error) => {
+                    log(&format!("切换蓝牙服务注册失败：{error}"));
+                    reply_err(&inner, error)
+                }
             }
         }
         "setAutostart" => {
@@ -386,6 +390,12 @@ pub async fn dispatch(inner: Arc<Inner>, request: Value) -> Value {
 }
 
 /// 打开/关闭蓝牙服务注册。
+///
+/// **两个分支都必须离开 async 工作线程**：`stop_server()` 会 join 接受线程（最多
+/// [`rfcomm::STOP_JOIN_DEADLINE`]）、注销 SDP、关套接字，`start_server()` 要做
+/// bind/listen + SDP 登记，都是阻塞调用。以前关闭分支直接在 `async fn` 里调
+/// `stop_server()`，把 tokio 的唯一工作线程占满后，连“读下一行请求、写回执”的对端
+/// 协程都排不上队——界面发 `setRegistration(false)` 就一直等不到回复。
 async fn toggle_registration(inner: Arc<Inner>, enabled: bool) -> Result<(), String> {
     if enabled {
         let task_inner = inner.clone();
@@ -398,7 +408,10 @@ async fn toggle_registration(inner: Arc<Inner>, enabled: bool) -> Result<(), Str
             let _ = save_config(&config);
         }
     } else {
-        stop_server(&inner);
+        let task_inner = inner.clone();
+        tokio::task::spawn_blocking(move || stop_server(&task_inner))
+            .await
+            .map_err(|e| format!("停止蓝牙服务失败：{e}"))?;
         inner.registration.store(false, Ordering::SeqCst);
         if let Ok(mut config) = inner.config.lock() {
             config.registration_enabled = false;

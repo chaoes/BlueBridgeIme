@@ -55,6 +55,13 @@ async fn connect() -> Result<NamedPipeClient, String> {
     Err(format!("后台服务未运行: {last}"))
 }
 
+/// 等一行应答的上限。
+///
+/// 服务端正常时是毫秒级；这里只是兜底：服务进程若因驱动/蓝牙协议栈卡在阻塞调用
+/// 里（例如注销 SDP），界面不能跟着无限转圈——超时就给用户一个能看懂的失败，
+/// 而不是把界面卡死。
+const REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// 发一条命令并等待一行应答。
 pub async fn call(command: &str, payload: Value) -> Result<Reply, String> {
     let client = connect().await?;
@@ -75,15 +82,30 @@ pub async fn call(command: &str, payload: Value) -> Result<Reply, String> {
         .map_err(|error| format!("写入控制通道失败: {error}"))?;
 
     let mut reader = BufReader::new(reader);
+    let text = read_reply_line(&mut reader, command).await?;
+    parse_reply(&text)
+}
+
+/// 读一行应答，超过 [`REPLY_TIMEOUT`] 就放弃（并给出中文原因）。
+async fn read_reply_line<R>(reader: &mut BufReader<R>, command: &str) -> Result<String, String>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
     let mut text = String::new();
-    let read = reader
-        .read_line(&mut text)
+    let read = tokio::time::timeout(REPLY_TIMEOUT, reader.read_line(&mut text))
         .await
+        .map_err(|_| {
+            format!(
+                "后台服务在 {} 秒内没有回复（{}），可能正在处理上一条命令或蓝牙协议栈无响应",
+                REPLY_TIMEOUT.as_secs(),
+                command
+            )
+        })?
         .map_err(|error| format!("读取服务响应失败: {error}"))?;
     if read == 0 {
         return Err("服务没有返回状态".into());
     }
-    parse_reply(&text)
+    Ok(text)
 }
 
 /// 要求应答成功并带状态（失败时把中文错误抛给界面）。
@@ -138,14 +160,7 @@ pub async fn subscribe() -> Result<(ServiceStatus, BufReader<ReadHalf<NamedPipeC
         .await
         .map_err(|error| format!("写入控制通道失败: {error}"))?;
     let mut reader = BufReader::new(reader);
-    let mut text = String::new();
-    let read = reader
-        .read_line(&mut text)
-        .await
-        .map_err(|error| format!("读取服务响应失败: {error}"))?;
-    if read == 0 {
-        return Err("服务订阅没有响应".into());
-    }
+    let text = read_reply_line(&mut reader, "subscribe").await?;
     let reply = parse_reply(&text)?;
     let status = require_ok(reply)?;
     Ok((status, reader))
@@ -189,5 +204,22 @@ mod tests {
         }
         assert_eq!(request["cmd"], "setRegistration");
         assert_eq!(request["enabled"], true);
+    }
+
+    #[tokio::test]
+    async fn missing_reply_line_reports_a_chinese_error() {
+        // 对端一直不发数据（管道没有关闭）时，read_reply_line 必须靠超时之外的
+        // “读到 0 字节”路径给出明确原因，而不是返回空串让上层误判。
+        let mut reader = BufReader::new(&b""[..]);
+        let error = read_reply_line(&mut reader, "status").await.unwrap_err();
+        assert_eq!(error, "服务没有返回状态");
+    }
+
+    #[tokio::test]
+    async fn reply_line_is_read_once() {
+        let mut reader = BufReader::new(&b"{\"ok\":true}\n{{\"ok\":false}\n"[..]);
+        let text = read_reply_line(&mut reader, "status").await.expect("可读");
+        assert_eq!(text.trim(), "{\"ok\":true}");
+        assert!(parse_reply(&text).expect("可解析").ok);
     }
 }

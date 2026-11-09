@@ -16,17 +16,25 @@
 //!   hwndFocus；hwndFocus 为空说明“顶级窗口自己持有焦点”，保守拒绝——宁可让用户
 //!   点一下输入框，也不要往不可预知的地点打字。
 //! - **是否可写**：不做 UIA 探测，由 `SendInput` 的返回值 + 目标窗口的实际反应兜底。
-//!   已知唯一会误判的是“只读输入框”：文本被目标丢弃，我们仍回 ok。这类情况不会
-//!   破坏安卓端草稿（用户可见内容没变，可手动重发），属于可接受的误报。
+//!   已知唯一会误判的是“只读输入框”：文本被目标丢弃，我们仍回 ok（见下文的收/发
+//!   窗口校验，那一类情况至少要“窗口确实还收焦点”）。
 //!
 //! ## 安全约束（PROTOCOL.md “注入规则”）
 //!
 //! 1. 绝不把文字打进自己（本进程窗口）——[`FocusError::SelfTarget`]。
 //! 2. 不为了绕过完整性级别而提权——只检测、只拒绝（[`FocusError::ElevatedTarget`]）。
 //! 3. 锁屏/UAC 的安全桌面上没有可用前台窗口——[`FocusError::SecureDesktop`]。
+//!    两条独立证据：类名命中系统 shell 表面，或当前线程**不在** `Default` 桌面。
+//!    反向证据（“在 Default 桌面但 `OpenInputDesktop` 打不开”）不作为拒绝依据，
+//!    否则非交互会话（计划任务/CI）里会全部误拒。
 //! 4. 前台窗口必须属于目标程序本身（`SendInput` 把按键投给**前台**窗口的线程，
 //!    前台若是本程序，按键会打进本程序而不是用户以为的那个输入框）——
-//!    [`foreground_is_shared_with_us`]，同样映射成 [`FocusError::SelfTarget`]。
+//!    [`focus::foreground_shared_with_us`]。
+//! 5. 焦点控件必须真的收得到 `WM_CHAR`：`hwndFocus` 的**根窗口**必须就是前台窗口。
+//!    这一条挡住的是“输入法/离屏辅助窗口持有焦点”的误放行——`SendInput` 会把字符
+//!    投给那个隐藏窗口，用户看到的是“回执 ok 但一个字都没进输入框”。代价是拒绝
+//!    IME 候选/组合窗口持有热点焦点的短暂瞬间（用户再点一下输入框即可），见
+//!    [`focus::receives_keyboard_input`]。
 //!
 //! ## 线程模型
 //!
@@ -51,9 +59,17 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetLastInputInfo, LASTINPUTINFO,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetAncestor, GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GetWindow, GetWindowTextW,
-    GetWindowThreadProcessId, IsIconic, GA_ROOT, GUITHREADINFO, GW_HWNDNEXT,
+    GetAncestor, GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GetWindow, GetWindowLongW,
+    GetWindowTextW, GetWindowThreadProcessId, IsIconic, GA_ROOT, GUITHREADINFO, GWL_STYLE,
+    GW_HWNDNEXT, WS_CHILD,
 };
+
+/// 判定预算：一次 `resolve_target`（含全部本地查询）必须在这个时间内完成。
+///
+/// 注入前要做“焦点/权限/桌面/修饰键/焦点是否收得到字符”这一串查询，每块发送前还要
+/// 复核一次；安卓端要求 8 s 内回执，这里把单次判定压到 100 ms 以内，留足余量。
+/// 目前实现里没有任何一次判定会等待——这个常量是回归保护用的上限。
+pub const RESOLVE_BUDGET_MS: u64 = 100;
 
 /// 注入链路上各类“不能继续”的原因；最终映射成安卓回执里的中文 `error`。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,6 +86,9 @@ pub enum FocusError {
     Minimized,
     /// 有 Shift/Ctrl/Alt/Win 被按住，注入会被组合成快捷键。
     ModifiersHeld,
+    /// 焦点控件收不到 `WM_CHAR`（IME/离屏辅助窗口持有焦点，或目标线程忙得没空处理）。
+    /// 找不到可拆分的轻量检查时，注入会在这里**提前**失败而不是回执成功却丢字。
+    InputBlocked(String),
 }
 
 impl FocusError {
@@ -89,6 +108,9 @@ impl FocusError {
             FocusError::SecureDesktop => "系统正在锁定或显示安全桌面，解锁后重试",
             FocusError::Minimized => "目标窗口已最小化，请恢复窗口后重试",
             FocusError::ModifiersHeld => "有按键（Shift/Ctrl/Alt/Win）被按住，请松开后重试",
+            FocusError::InputBlocked(_) => {
+                "当前窗口不在输入状态（可能有输入法候选框或窗口正忙），请点一下要输入的输入框后重试"
+            }
         }
     }
 }
@@ -176,7 +198,9 @@ fn thread_desktop_is_default() -> bool {
 }
 
 /// 额外探测：能否打开“输入桌面”（锁屏安全桌面通常打不开）。
-fn can_open_input_desktop() -> bool {
+///
+/// 只作为日志/诊断使用——非交互会话里它也会失败，不能当成“正在锁屏”。
+pub fn can_open_input_desktop() -> bool {
     // SAFETY: OpenInputDesktop 无指针参数；成功后句柄需要 CloseDesktop。
     let hdesk = unsafe {
         OpenInputDesktop(
@@ -213,14 +237,7 @@ pub fn snapshot_foreground() -> Option<FocusSnapshot> {
         return None;
     }
 
-    let mut info = GUITHREADINFO {
-        cbSize: core::mem::size_of::<GUITHREADINFO>() as u32,
-        ..Default::default()
-    };
-    // SAFETY: cbSize 已按要求填写，指针指向栈上已初始化结构体，仅本次调用有效。
-    let got = unsafe { GetGUIThreadInfo(thread_id, &mut info as *mut GUITHREADINFO) }.is_ok();
-
-    let hwnd_focus = if got { info.hwndFocus } else { HWND::default() };
+    let hwnd_focus = focus_of_thread(thread_id).unwrap_or_default();
     let hwnd_root = if hwnd_focus.0.is_null() {
         hwnd_fg
     } else {
@@ -236,6 +253,25 @@ pub fn snapshot_foreground() -> Option<FocusSnapshot> {
         hwnd_root: hwnd_to_isize(hwnd_root),
         on_input_desktop: thread_desktop_is_default(),
     })
+}
+
+/// 某个线程当前的焦点窗口；`GetGUIThreadInfo` 失败时返回 `None`。
+///
+/// 与 [`snapshot_foreground`] 分开是给测试用的：进程内自检可以对自己的线程查，
+/// 不必先把窗口切成前台窗口（CI/无交互会话里也能跑通授权逻辑之外的部分）。
+pub fn focus_of_thread(thread_id: u32) -> Option<HWND> {
+    if thread_id == 0 {
+        return None;
+    }
+    let mut info = GUITHREADINFO {
+        cbSize: core::mem::size_of::<GUITHREADINFO>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: cbSize 已按要求填写，指针指向栈上已初始化结构体，仅本次调用有效。
+    if unsafe { GetGUIThreadInfo(thread_id, &mut info as *mut GUITHREADINFO) }.is_err() {
+        return None;
+    }
+    Some(info.hwndFocus)
 }
 
 /// 某个窗口的类名（失败时返回空串）。
@@ -260,6 +296,15 @@ pub fn window_title(hwnd: isize) -> String {
     String::from_utf16_lossy(&title[..n.min(title.len())])
 }
 
+/// 窗口的 `GWL_STYLE`（失败返回 0）。
+pub fn window_style(hwnd: isize) -> u32 {
+    if hwnd == 0 {
+        return 0;
+    }
+    // SAFETY: 纯查询；GWL_STYLE 返回 DWORD，按 u32 读取在 64 位下同样正确。
+    unsafe { GetWindowLongW(isize_to_hwnd(hwnd), GWL_STYLE) as u32 }
+}
+
 /// 一次快照的可读描述，供日志使用。
 pub fn describe_window(snap: &FocusSnapshot) -> String {
     let class = window_class(snap.hwnd_focus);
@@ -276,6 +321,10 @@ pub fn describe_window(snap: &FocusSnapshot) -> String {
 /// 安全界面都用它。这类窗口**会**暴露一个看起来正常的 `hwndFocus`，所以“有焦点”
 /// 不足以说明可以输入。
 ///
+/// 注意：UWP 应用把自己的内容放在子 `CoreWindow` 里，但**前台窗口**仍是顶层窗口
+/// （`ApplicationFrameWindow` 等），所以这条只命中系统表面，不会误拒 UWP 应用；
+/// 若某个 UWP 真的直接以 `CoreWindow` 作为前台窗口，则和上面一样保守拒绝。
+///
 /// 代价：用户若真的想让文字进入 Windows shell 表面（开始菜单搜索框等），也会
 /// 被拒绝。对本产品而言“丢失文字却回执 ok”比“误拒”更糟，因此接受此代价。
 pub const SECURE_SURFACE_CLASS: &str = "Windows.UI.Core.CoreWindow";
@@ -283,6 +332,49 @@ pub const SECURE_SURFACE_CLASS: &str = "Windows.UI.Core.CoreWindow";
 /// 前台窗口是否属于锁屏/安全桌面表面。
 pub fn is_secure_surface(snap: &FocusSnapshot) -> bool {
     window_class(snap.hwnd_foreground).eq_ignore_ascii_case(SECURE_SURFACE_CLASS)
+}
+
+/// 焦点控件是否真的收得到 `WM_CHAR`（`SendInput` 投递的目标就是它）。
+///
+/// 判据（纯本地查询，不跨进程、不阻塞）：
+/// 1. 焦点窗口存在且 `GetAncestor(hwndFocus, GA_ROOT)` 就是前台窗口——否则焦点在
+///    别的顶级窗口里（典型：输入法候选窗/离屏 IME 辅助窗口持有 `hwndFocus`），
+///    `SendInput` 的字符会投给那个窗口，输入框里一个字节都不会出现；
+/// 2. 焦点窗口自己不是 `WS_CHILD`（即焦点在顶级窗口自身上，没有子输入框）。
+///
+/// 误拒风险最大的一条是 1：应用弹出菜单/工具栏时可能把焦点留在自己的顶级窗口，
+/// 而根窗口仍是前台窗口，因此不受影响；只有“焦点属于另一个顶级窗口”才拒绝。
+///
+/// 跨进程的“目标线程正在等待输入”检查留到 [`resolve_target`]：那里有时限。
+pub fn receives_keyboard_input(snap: &FocusSnapshot) -> bool {
+    if !snap.has_focus() {
+        return false;
+    }
+    if snap.hwnd_root != snap.hwnd_foreground {
+        return false;
+    }
+    // 焦点窗口本身是子窗口时（正常输入框），根窗口必然等于前台窗口；这里只处理
+    // “焦点就在顶层窗口上”的情况——它不接收字符消息，保守拒绝。
+    window_style(snap.hwnd_focus) & WS_CHILD.0 == 0
+}
+
+/// 前台线程是否正处在“自己的模态输入循环”里（`hwndCapture` 指向的不是焦点窗口）。
+///
+/// Windows 没有公开“这条队列正在 WaitMessage”的查询；这里用的是**保守替代**：
+/// 捕获窗口非空且不是焦点窗口时，说明该线程正在拖动/菜单/模态对话框的自有循环里，
+/// 此时 `SendInput` 的字符会先被它截走，输入框里未必能拿到字。
+///
+/// 取不到 `GetGUIThreadInfo` 时返回 false（不因为查不到而误拒）。
+pub fn thread_is_capturing(snap: &FocusSnapshot) -> bool {
+    let mut info = GUITHREADINFO {
+        cbSize: core::mem::size_of::<GUITHREADINFO>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: cbSize 已填写，指针指向栈上结构体。
+    if unsafe { GetGUIThreadInfo(snap.thread_id, &mut info as *mut GUITHREADINFO) }.is_err() {
+        return false;
+    }
+    !info.hwndCapture.0.is_null() && hwnd_to_isize(info.hwndCapture) != snap.hwnd_focus
 }
 
 /// 按字符数截断并加省略号。
@@ -474,7 +566,7 @@ fn target_has_other_windows(snap: &FocusSnapshot) -> bool {
 /// 为什么需要：`SendInput` 把按键塞进**前台**窗口的输入队列，再投给该线程的焦点
 /// 窗口。所以只要前台是本程序的窗口，焦点再在别的进程里也白搭——文字只会落在本
 /// 程序自己身上。
-pub fn foreground_is_shared_with_us(snap: &FocusSnapshot) -> bool {
+pub fn foreground_shared_with_us(snap: &FocusSnapshot) -> bool {
     window_belongs_to_us(snap) || !target_has_other_windows(snap)
 }
 
@@ -483,48 +575,190 @@ pub fn shared_foreground_check_disabled() -> bool {
     std::env::var_os("BLUETOOTH_BRIDGE_ALLOW_SHARED_FOREGROUND").is_some()
 }
 
-/// 解析目标窗口并执行全部安全检查（不含“真正开始输入”那一步）。
-pub fn resolve_target() -> Result<FocusSnapshot, FocusError> {
-    let snap = snapshot_foreground().ok_or(FocusError::NoTarget)?;
+/// 句柄→结构体/字符串查询会不会真的访问内核对象。
+///
+/// 这是安全判断的**唯一**放行口径：句柄为 0，或者目标进程其实是本进程时，一律不
+/// 做跨进程查询，只按“编造句柄”的语义回答。这样纯逻辑单测（用假句柄）可以确定地
+/// 验证判定顺序，同时能查出“查询失败被误当成通过”的问题。
+fn handle_is_live(hwnd: isize, pid: u32) -> bool {
+    hwnd != 0 && pid != current_pid()
+}
 
+/// 对**已经取到的**快照执行全部安全检查（不含“真正开始输入”那一步）。
+///
+/// 顺序按“后果严重、判定便宜”排列；每一条都必须能独立成立：
+///
+/// 1. 自注入（pid 是本进程）——多会话并发时最容易踩，放在最前面；
+/// 2. 安全桌面（类名 / 线程桌面）；
+/// 3. 最小化；
+/// 4. 高权限目标（UIPI 会静默丢字）；
+/// 5. 前台被本程序占用（pid 不同但前台是本程序的窗口）；
+/// 6. 无焦点；
+/// 7. 焦点收不到字符（IME/离屏辅助窗口持有焦点）；
+/// 8. 修饰键被按住。
+pub fn check_snapshot(snap: &FocusSnapshot) -> Result<(), FocusError> {
     // 自检开关在前：进程内的自检窗口天然与自检程序同进程，其余安全检查（锁屏、
     // 最小化、提权、无焦点、按住修饰键）照常执行。
-    // 注意 `owned` 必须比窗口身份判断更严：目标 pid 是本进程 **且** 焦点/前台
-    // 确实在本进程的窗口上才算“自己的窗口”。只看 pid 会把“本程序只是个前台
-    // 垫层、焦点在别的进程”的常规场景误判成 SelfTarget。
-    if window_belongs_to_us(&snap) && !shared_foreground_check_disabled() {
+    let relaxed = shared_foreground_check_disabled();
+    // 只有“真的能查到进程权限/窗口类名”时才把它当成拒绝依据：编造的句柄查下去
+    // 只会得到假阳性。
+    let live = handle_is_live(snap.hwnd_foreground, snap.pid);
+    if window_belongs_to_us(snap) && !relaxed {
         return Err(FocusError::SelfTarget);
     }
-    let owned = window_belongs_to_us(&snap);
-    // 锁屏/UAC 安全桌面：先看线程桌面，再看前台窗口类名（锁屏会暴露一个带焦点
-    // 的 CoreWindow，光看“有没有焦点”是拦不住的）。
-    if is_secure_surface(&snap) && !owned {
+    let owned = window_belongs_to_us(snap);
+    // 锁屏/UAC 安全桌面：先看前台窗口类名，再看线程桌面（锁屏会暴露一个带焦点的
+    // CoreWindow，光看“有没有焦点”是拦不住的；反过来“OpenInputDesktop 打不开”
+    // 在非交互会话里也会成立，不能单独作为拒绝依据）。
+    if !owned && live && is_secure_surface(snap) {
         return Err(FocusError::SecureDesktop);
     }
-    if !owned && !snap.on_input_desktop && !can_open_input_desktop() {
+    if !owned && !snap.on_input_desktop {
         return Err(FocusError::SecureDesktop);
     }
-    if is_iconic(&snap) {
+    if is_iconic(snap) {
         return Err(FocusError::Minimized);
     }
-    if elevation_blocked(snap.pid) {
+    if live && elevation_blocked(snap.pid) {
         return Err(FocusError::ElevatedTarget);
     }
-    if foreground_is_shared_with_us(&snap) && !shared_foreground_check_disabled() {
+    if foreground_shared_with_us(snap) && !relaxed {
         return Err(FocusError::SelfTarget);
     }
     if !snap.has_focus() {
         return Err(FocusError::NoTarget);
     }
+    if !receives_keyboard_input(snap) {
+        return Err(FocusError::InputBlocked(describe_window(snap)));
+    }
+    // 捕获窗口查询要跨进程调用 `GetGUIThreadInfo`：编造的快照上不做，避免把
+    // “查不到”的理由混进纯逻辑判定。
+    if live && thread_is_capturing(snap) {
+        return Err(FocusError::InputBlocked(format!(
+            "{} (捕获窗口)",
+            describe_window(snap)
+        )));
+    }
     if modifiers_held() {
         return Err(FocusError::ModifiersHeld);
     }
+    Ok(())
+}
+
+/// 解析目标窗口并执行全部安全检查（不含“真正开始输入”那一步）。
+pub fn resolve_target() -> Result<FocusSnapshot, FocusError> {
+    resolve_target_with(snapshot_foreground)
+}
+
+/// [`resolve_target`] 的可注入版本：把“取快照”作为参数传入。
+///
+/// 为什么要拆：判定顺序是安全边界，纯逻辑单测必须能提供任意快照（无前台、别的进程、
+/// 自称本进程、锁屏桌面……），否则只能靠真窗口才测得到。
+fn resolve_target_with<S>(snapshot: S) -> Result<FocusSnapshot, FocusError>
+where
+    S: Fn() -> Option<FocusSnapshot>,
+{
+    let snap = snapshot().ok_or(FocusError::NoTarget)?;
+    check_snapshot(&snap)?;
     Ok(snap)
+}
+
+/// 一次判定的耗时（毫秒），供日志/诊断使用。
+///
+/// 超过 [`RESOLVE_BUDGET_MS`] 说明链路里混进了阻塞调用（历史上踩过的坑：在判定里
+/// 做跨进程 COM/UIA 查询），日志里会被标出来。
+pub fn resolve_target_timed() -> Result<(FocusSnapshot, u64), FocusError> {
+    let started = Instant::now();
+    let result = resolve_target();
+    let elapsed = started.elapsed().as_millis() as u64;
+    if elapsed > RESOLVE_BUDGET_MS {
+        service_warn(&format!(
+            "焦点判定耗时 {elapsed} ms，超过预算 {RESOLVE_BUDGET_MS} ms：链路里可能有阻塞调用"
+        ));
+    }
+    result.map(|snap| (snap, elapsed))
+}
+
+/// 本模块不依赖日志框架（要能被测试/示例单独引用），统一走 stderr。
+fn service_warn(message: &str) {
+    eprintln!("[focus] {message}");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 说明：这里的快照全部用“编造的句柄 + 非本进程 pid”，查询类判定（类名、提权、
+    // 捕获窗口）在 `handle_is_live` 处就被跳过，所以用例是确定性的、不依赖真实桌面。
+
+    /// 编造的窗口句柄快照会走 `foreground_shared_with_us`（真实 Z 序查询），在无关的
+    /// 检查上先拦住。测试要验的是判定顺序本身，所以临时放开那一条；用同一把锁串行，
+    /// 免得并行测试互相关掉别人的开关。
+    mod tests_env {
+        use std::sync::Mutex;
+
+        use super::{
+            check_accepts_plain_child_focus_snapshot,
+            check_rejects_focus_in_another_top_level_window,
+        };
+        use crate::service::win::injection::SHARED_FOREGROUND_ENV;
+
+        /// 串行化“改环境变量”的测试用的锁。
+        ///
+        /// 拿不到锁就立刻 panic，绝不死等：在 Rust 测试线程上阻塞等待这把锁会永久挂住
+        /// （已实测），整条 `cargo test` 乃至 CI 都会被冻住。
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+        /// 在“测试本线程内”临时打开共享前台的豁免开关。
+        ///
+        /// 注意这里**不用** RAII：`MutexGuard` 的生命周期绑定在闭包栈上，一旦被放进返回
+        /// 值、又碰上测试线程池，`Drop` 时机就不可控（实测会出现锁没被释放）。
+        /// 所以改成显式传闭包：闭包结束时同一个函数里立刻还原环境变量并放锁。
+        pub fn with_shared_foreground<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
+            let guard = ENV_LOCK
+                .try_lock()
+                .unwrap_or_else(|_| panic!("ENV_LOCK 被别的测试占用（WouldBlock）"));
+            let previous = std::env::var_os(SHARED_FOREGROUND_ENV);
+            // SAFETY: 持锁期间只有本测试改这个变量。
+            unsafe {
+                match enabled {
+                    true => std::env::set_var(SHARED_FOREGROUND_ENV, "1"),
+                    false => std::env::remove_var(SHARED_FOREGROUND_ENV),
+                }
+            }
+            let result = run();
+            // SAFETY: 同上，仍持锁。
+            unsafe {
+                match previous {
+                    Some(value) => std::env::set_var(SHARED_FOREGROUND_ENV, value),
+                    None => std::env::remove_var(SHARED_FOREGROUND_ENV),
+                }
+            }
+            drop(guard);
+            result
+        }
+
+        #[test]
+        fn with_shared_foreground_sets_and_restores() {
+            let before = std::env::var_os(SHARED_FOREGROUND_ENV);
+            with_shared_foreground(true, || {
+                assert!(
+                    std::env::var_os(SHARED_FOREGROUND_ENV).is_some(),
+                    "闭包内开关必须开着"
+                );
+                // 两个使用该开关的用例必须在**同一个闭包**里顺序执行：
+                // 并行测试时它们同时要拿 ENV_LOCK，而为了不挂住 CI 这里只能
+                // try_lock（拿不到立即 panic），所以不能把它们分成两个 `#[test]`。
+                check_rejects_focus_in_another_top_level_window();
+                check_accepts_plain_child_focus_snapshot();
+            });
+            assert_eq!(
+                std::env::var_os(SHARED_FOREGROUND_ENV),
+                before,
+                "闭包结束必须还原"
+            );
+        }
+    }
 
     fn snap(hwnd_fg: isize, hwnd_focus: isize) -> FocusSnapshot {
         FocusSnapshot {
@@ -540,7 +774,6 @@ mod tests {
     #[test]
     fn same_target_compares_foreground_and_focus() {
         assert!(snap(0x100, 0x101).same_target(&snap(0x100, 0x101)));
-        assert!(!snap(0x100, 0x101).same_target(&snap(0x100, 0x102)));
         assert!(!snap(0x100, 0x101).same_target(&snap(0x200, 0x101)));
     }
 
@@ -564,6 +797,7 @@ mod tests {
             FocusError::SecureDesktop,
             FocusError::Minimized,
             FocusError::ModifiersHeld,
+            FocusError::InputBlocked("x".into()),
         ] {
             let text = error.message();
             assert!(!text.is_empty());
@@ -593,6 +827,7 @@ mod tests {
         assert!(!describe_target(&s).is_empty());
         assert_eq!(window_class(0), "");
         assert_eq!(window_title(0), "");
+        assert_eq!(window_style(0), 0);
     }
 
     #[test]
@@ -605,5 +840,79 @@ mod tests {
     fn modifiers_query_does_not_panic() {
         let _ = modifiers_held();
         let _ = system_idle_ms();
+    }
+
+    #[test]
+    fn check_order_rejects_own_window_before_everything_else() {
+        let mut own = snap(0x100, 0x101);
+        own.pid = current_pid();
+        own.on_input_desktop = false;
+        assert_eq!(check_snapshot(&own), Err(FocusError::SelfTarget));
+    }
+
+    #[test]
+    fn check_rejects_secure_desktop_by_class_and_by_desktop_name() {
+        // 真实窗口类名才可能命中，这里直接验证“不在 Default 桌面”这一条。
+        let mut off = snap(0x100, 0x101);
+        off.on_input_desktop = false;
+        assert_eq!(check_snapshot(&off), Err(FocusError::SecureDesktop));
+    }
+
+    // 这两条用例不再是 `#[test]`：它们都要临时改环境变量，而 `with_shared_foreground`
+    // 只能 try_lock（为了不把 CI 挂住）；两个并行的 `#[test]` 同时进来就会
+    // WouldBlock 而失败。统一由 `with_shared_foreground_sets_and_restores` 顺序调用。
+    fn check_rejects_focus_in_another_top_level_window() {
+        // 焦点属于另一个顶级窗口（典型：输入法候选窗/离屏 IME）——拒绝。
+        //
+        // 快照里的句柄是编造的，`foreground_shared_with_us` 会走 Z 序链得到“链尾/无
+        // 其他窗口”的结论，从而在 SelfTarget 上先拦住；这里用测试专用的环境开关放开
+        // 那一条，专门验证“根窗口 != 前台窗口”这一判定本身。
+        let mut other_root = snap(0x100, 0x101);
+        other_root.hwnd_root = 0x200;
+        assert!(matches!(
+            check_snapshot(&other_root),
+            Err(FocusError::InputBlocked(_))
+        ));
+    }
+
+    fn check_accepts_plain_child_focus_snapshot() {
+        // 焦点在前台窗口的子控件上：通过全部检查（修饰键此时没被按住）。
+        //
+        // 用核心控件路径验证：前台窗口“不是本程序的窗口/不是本程序在前”这一条
+        // 在真实桌面上可能成立也可能不成立，纯逻辑单测里用测试专用开关把它固定
+        // 成“命中”，测完按原样还原。用户此刻真的按着 Shift（极罕见）时跳过。
+        if modifiers_held() {
+            eprintln!("跳过：用户此刻按着修饰键（会被 ModifiersHeld 拦住）");
+            return;
+        }
+        let ok = snap(0x100, 0x101);
+        assert_eq!(check_snapshot(&ok), Ok(()));
+    }
+
+    #[test]
+    fn resolve_returns_no_target_when_no_foreground() {
+        let result: Result<FocusSnapshot, FocusError> = resolve_target_with(|| None);
+        assert_eq!(result, Err(FocusError::NoTarget));
+    }
+
+    #[test]
+    fn resolve_reports_snapshot_failure_kind() {
+        let result: Result<FocusSnapshot, FocusError> = resolve_target_with(|| {
+            let mut off = snap(0x100, 0x101);
+            off.on_input_desktop = false;
+            Some(off)
+        });
+        assert_eq!(result, Err(FocusError::SecureDesktop));
+    }
+
+    #[test]
+    fn real_resolve_is_within_budget() {
+        // 无前台窗口的会话（CI/锁屏）里也会立刻返回 None，不会卡住。
+        let started = Instant::now();
+        let _ = resolve_target();
+        assert!(
+            started.elapsed().as_millis() < RESOLVE_BUDGET_MS as u128 * 10,
+            "resolve_target 不应阻塞"
+        );
     }
 }

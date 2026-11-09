@@ -124,6 +124,78 @@ pub async fn run_headless() -> Result<(), String> {
     Ok(())
 }
 
+/// 控制面自测（`bluetooth-input-bridge-service --selfcheck-ctl`）：验证“运行中关掉注册”
+/// 这条真实报障路径不会卡住。
+///
+/// 走的是界面完全相同的路径：起控制通道 → 客户端连命名管道发命令。步骤为
+/// `status` → `setRegistration(true)` → `status` → `setRegistration(false)` →
+/// `status`，每一步都打印耗时；任何一步超过 `STEP_LIMIT` 就算失败。
+///
+/// `with_radio = false` 时跳过蓝牙服务启动（没有蓝牙适配器的机器上也能验证控制面）。
+pub async fn selftest_ctl(with_radio: bool) -> Result<(), String> {
+    use std::time::{Duration, Instant};
+
+    const STEP_LIMIT: Duration = Duration::from_secs(10);
+    let inner = service::new_inner();
+    let serve_inner = inner.clone();
+    let control_task = tokio::spawn(async move {
+        if let Err(error) = control::serve(serve_inner).await {
+            service::log(&format!("控制通道退出：{error}"));
+        }
+    });
+
+    // 等管道实例建好（probe 能连上即视为就绪）。
+    let mut ready = false;
+    for _ in 0..50 {
+        if control::probe().await {
+            ready = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    if !ready {
+        control_task.abort();
+        return Err("控制通道在 5 秒内没有就绪".to_string());
+    }
+
+    let steps: [(&str, Option<bool>); 4] = [
+        ("status", None),
+        ("setRegistration(true)", with_radio.then_some(true)),
+        ("status", None),
+        ("setRegistration(false)", with_radio.then_some(false)),
+    ];
+    let mut failure: Option<String> = None;
+    for (name, enabled) in steps {
+        let started = Instant::now();
+        let outcome = match enabled {
+            Some(value) => client::set_registration(value).await,
+            None => client::status().await,
+        };
+        let elapsed = started.elapsed();
+        let text = match &outcome {
+            Ok(_) => "ok".to_string(),
+            Err(error) => format!("失败：{error}"),
+        };
+        println!("[自测] {name}：{elapsed:?} → {text}");
+        if elapsed > STEP_LIMIT && failure.is_none() {
+            failure = Some(format!("{name} 用了 {elapsed:?}，超过上限 {STEP_LIMIT:?}"));
+        }
+    }
+
+    // 不管有没有失败都要收尾：先把服务停掉，再退出控制通道。
+    tokio::task::spawn_blocking(move || service::stop_server(&inner))
+        .await
+        .map_err(|error| format!("停止蓝牙服务失败：{error}"))?;
+    control_task.abort();
+    match failure {
+        Some(message) => Err(message),
+        None => {
+            println!("[自测] 完成");
+            Ok(())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

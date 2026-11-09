@@ -98,4 +98,11 @@ cargo check
 cargo test --lib
 ```
 
-Windows 后端在本机（Windows 11 Pro 26200、Realtek 蓝牙适配器、MSVC 工具链）上验证：`cargo check --all-targets`、`cargo clippy --all-targets`、`cargo fmt --check` 均无告警，`cargo test --lib` 55 项通过；服务启动后日志显示 `SDP 已登记，RFCOMM 通道 4` 与「已发布 Bluetooth Input Bridge」，用 `WSALookupServiceBeginW` 按 UUID 查询本机 SDP 数据库能查到该记录（服务停止后为 0 条），命名管道 `{"cmd":"status"}` 返回完整状态。连接真实手机与端到端打字仍待在有蓝牙手机的机器上实测（本机没有配对手机可用）。
+Windows 后端在本机（Windows 11 Pro 26200、Realtek 蓝牙适配器、MSVC 工具链）上验证：
+
+- `cargo check --locked --all-targets`、`cargo clippy --locked --all-targets`、`cargo fmt -- --check` 均无告警，`cargo test --locked --lib` **99 项通过**（约 0.4 s，含分帧/去重/回执顺序、注入文本规划、焦点判定等纯逻辑用例）。
+- 服务启动后日志显示 `SDP 已登记，RFCOMM 通道 4` 与「已发布 Bluetooth Input Bridge（0000e8b6-…）」；用 `WSALookupServiceBeginW` 按 UUID 查询本机 SDP 数据库能查到该记录，服务停止后为 0 条，重复登记也不会残留多条。
+- 命名管道用真实客户端（Win32 `CreateFileW`+`WriteFile`/`ReadFile`）验证：`status`、`setRegistration(false/true)`、`setAutostart(true/false)`、`bogus`、坏 JSON、空测试文字都按协议返回；`setRegistration(false)` 207 ms 返回（这个命令以前会永久挂起）；注册表 `Run` 值写入与删除往返一致。
+- 服务二进制自带控制通道自测：`bluetooth-input-bridge-service.exe --selftest-ctl`（真实命名管道 + 真实蓝牙，依次 status / setRegistration(true) / status / setRegistration(false)，每步打印耗时，任一分支都会收尾并退出）。
+
+连接真实手机并端到端打字仍待在有蓝牙手机的机器上实测（本机没有配对手机）。`SendInput` 的真实注入往返已由单元测试里的进程内 EDIT 窗口覆盖；跨进程前台场景需要解锁桌面后手动把记事本切到前台验证。

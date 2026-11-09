@@ -58,22 +58,82 @@ fn product_binary_name() -> &'static str {
 }
 
 /// 当前是否已开启自启。
+///
+/// 只判断“值存在”会谎报：程序换过安装目录后，注册表里还留着旧路径的自启项，
+/// 开机时系统只会静默失败。这里同时比对命令行，路径不一致视为需要修复（返回 `false`，
+/// 让界面上开关显示为关闭，用户再打开一次就会写入新路径）。
 pub fn is_enabled() -> bool {
+    match read_run_value() {
+        Some(current) => same_command(&current, &command_line()),
+        None => false,
+    }
+}
+
+/// 注册表里记录的自启命令行（空格规范化后比较）。
+fn same_command(current: &str, expected: &str) -> bool {
+    normalize(current) == normalize(expected)
+}
+
+fn normalize(command: &str) -> String {
+    let trimmed = command.trim();
+    // 去掉首尾引号的分层差异：带引号和不带引号指向同一个程序也算一致。
+    let unquoted = trimmed
+        .strip_prefix('"')
+        .and_then(|rest| rest.split('"').next())
+        .unwrap_or(trimmed)
+        .trim();
+    unquoted.to_lowercase()
+}
+
+/// 读出自启值（REG_SZ），不存在或读取失败返回 `None`。
+fn read_run_value() -> Option<String> {
     let key_path = run_key_path();
     let mut key = HKEY::default();
     // SAFETY: 键路径是只读字符串，句柄只在本函数内使用并在末尾关闭。
     unsafe {
         if RegOpenKeyExW(HKEY_CURRENT_USER, &key_path, Some(0), KEY_READ, &mut key) != ERROR_SUCCESS
         {
-            return false;
+            return None;
         }
         let name = HSTRING::from(RUN_VALUE);
         let mut data_type = REG_SZ;
         let mut len = 0u32;
         let status = RegQueryValueExW(key, &name, None, Some(&mut data_type), None, Some(&mut len));
+        if status != ERROR_SUCCESS || len == 0 {
+            let _ = RegCloseKey(key);
+            return None;
+        }
+        let mut buffer = vec![0u8; len as usize];
+        let status = RegQueryValueExW(
+            key,
+            &name,
+            None,
+            Some(&mut data_type),
+            Some(buffer.as_mut_ptr()),
+            Some(&mut len),
+        );
         let _ = RegCloseKey(key);
-        status == ERROR_SUCCESS && len > 0
+        if status != ERROR_SUCCESS {
+            return None;
+        }
+        buffer.truncate(len as usize);
+        Some(decode_reg_sz(&buffer))
     }
+}
+
+/// REG_SZ 是 UTF-16LE、可带结尾 NUL 的字节串。
+fn decode_reg_sz(bytes: &[u8]) -> String {
+    // 末尾不足两个字节的残余直接忽略（合法值总是偶数长）。
+    let (pairs, _tail) = bytes.as_chunks::<2>();
+    let mut units: Vec<u16> = Vec::with_capacity(pairs.len());
+    for pair in pairs {
+        let unit = u16::from_le_bytes(*pair);
+        if unit == 0 {
+            break;
+        }
+        units.push(unit);
+    }
+    String::from_utf16_lossy(&units)
 }
 
 /// 开启/关闭自启，返回注册表里**实际**的状态（写入失败时不会谎报成功）。
@@ -124,6 +184,15 @@ fn open_run_key(write: bool) -> Result<HKEY, WIN32_ERROR> {
 
 fn write_run_value() -> Result<(), String> {
     let command = command_line();
+    if let Some(path) = service_binary() {
+        // 自启项指向一个不存在的文件时，开机只会静默失败；宁可让用户现在就知道。
+        if !path.is_file() {
+            return Err(format!(
+                "找不到无界面服务程序：{}（请先重新安装或编译）",
+                path.display()
+            ));
+        }
+    }
     let wide: Vec<u16> = command.encode_utf16().chain(std::iter::once(0)).collect();
     let key = open_run_key(true)
         .map_err(|status| format!("无法打开开机自启注册表项（Win32 {:#06X}）", status.0))?;
@@ -152,14 +221,18 @@ fn write_run_value() -> Result<(), String> {
 fn delete_run_value() -> Result<(), String> {
     let key = match open_run_key(false) {
         Ok(key) => key,
-        // Run 项不存在 = 本来就没开启，视为成功。
+        // Run 项不存在 = 本来就没开启，视为成功，也不再写一条“已关闭”的日志。
         Err(_) => return Ok(()),
     };
     let name = HSTRING::from(RUN_VALUE);
     // SAFETY: 句柄来自 open_run_key，参数是只读字符串。
     let status = unsafe { RegDeleteValueW(key, &name) };
     let _ = unsafe { RegCloseKey(key) };
-    if status != ERROR_SUCCESS && status != windows::Win32::Foundation::ERROR_FILE_NOT_FOUND {
+    if status == windows::Win32::Foundation::ERROR_FILE_NOT_FOUND {
+        // 本来就没设置：不是一次实际变更，保持日志干净。
+        return Ok(());
+    }
+    if status != ERROR_SUCCESS {
         return Err(format!("删除开机自启失败（Win32 {:#06X}）", status.0));
     }
     super::service::log("已关闭开机自启");
@@ -203,5 +276,44 @@ mod tests {
     #[test]
     fn product_binary_name_matches_the_cargo_bin() {
         assert_eq!(product_binary_name(), "bluetooth-input-bridge-service.exe");
+    }
+
+    #[test]
+    fn reg_sz_value_is_decoded_as_utf16() {
+        // “C:\a b\svc.exe” + 结尾 NUL，按 UTF-16LE 存放。
+        let text = "C:\\a b\\svc.exe";
+        let mut bytes: Vec<u8> = text.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        bytes.extend_from_slice(&[0, 0]);
+        assert_eq!(decode_reg_sz(&bytes), text);
+        // 没有结尾 NUL 也要能读。
+        let bytes: Vec<u8> = "svc.exe"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        assert_eq!(decode_reg_sz(&bytes), "svc.exe");
+        assert_eq!(decode_reg_sz(&[]), "");
+    }
+
+    #[test]
+    fn stale_autostart_path_is_reported_as_off() {
+        // 换过安装目录后注册表里残留旧路径：必须判定为“没开启”，否则用户看到开关是开的，
+        // 开机却启动不了（系统只会静默失败）。
+        let current = r#""D:\old\bluetooth-input-bridge-service.exe""#;
+        let expected = r#""D:\new\bluetooth-input-bridge-service.exe""#;
+        assert!(!same_command(current, expected), "{current} / {expected}");
+        assert!(same_command(
+            current,
+            r#"D:\old\bluetooth-input-bridge-service.exe"#
+        ));
+        // 大小写差异不算变化（Windows 路径不区分大小写）。
+        assert!(same_command(r#""C:\SVC.EXE""#, r#""c:\svc.exe""#));
+        // 带不带引号指向同一路径也算一致。
+        assert!(same_command(r#""C:\svc.exe""#, r#"C:\svc.exe"#));
+    }
+
+    #[test]
+    fn command_line_normalization_is_stable() {
+        assert_eq!(normalize(r#""a b c.exe""#), normalize("a b c.exe"));
+        assert_eq!(normalize("  x  "), "x");
     }
 }
