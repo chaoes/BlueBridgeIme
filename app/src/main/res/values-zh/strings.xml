@@ -1,0 +1,71 @@
+<resources>
+    <string name="app_name">蓝牙输入桥</string>
+    <string name="tagline">用手机输入法，为电脑输入</string>
+
+    <string name="connect_title">连接电脑</string>
+    <string name="status_ready">准备就绪</string>
+    <string name="status_preparing">正在准备自动连接…</string>
+    <string name="status_connecting_secure">正在建立安全蓝牙连接…</string>
+    <string name="status_unsupported">此设备不支持经典蓝牙。</string>
+    <string name="status_permissions">需要附近设备权限。旧版 Android 扫描设备还需要定位权限。</string>
+    <string name="action_grant">授予权限</string>
+    <string name="status_bluetooth_off">开启蓝牙后即可连接已配对的电脑。</string>
+    <string name="action_enable_bluetooth">开启蓝牙</string>
+    <string name="action_searching">搜索中…</string>
+    <string name="action_search">搜索附近设备</string>
+    <string name="action_back_to_input">返回输入</string>
+    <string name="device_list">设备列表</string>
+    <string name="device_list_subtitle">按本软件最近连接时间倒序排列</string>
+    <string name="device_list_empty">暂无设备，点上方按钮搜索。</string>
+    <string name="device_list_footer">电脑端需运行 RFCOMM 服务；未配对设备需要开启可发现。</string>
+    <string name="bonded">已配对</string>
+    <string name="nearby">附近</string>
+    <string name="just_now">刚刚</string>
+
+    <string name="last_device">上次连接的设备</string>
+    <string name="action_devices">设备</string>
+    <string name="action_disconnect">断开</string>
+    <string name="action_reconnect">重新连接</string>
+    <string name="state_connected">●  已连接</string>
+    <string name="state_connecting">◌  正在连接</string>
+    <string name="state_disconnected">○  未连接</string>
+
+    <string name="auto_send">自动发送</string>
+    <string name="auto_send_immediate">输入法提交后立即发送</string>
+    <string name="auto_send_delay">无新输入 %1$s 秒后发送</string>
+    <string name="label_now">立即</string>
+    <string name="label_3s">3 秒</string>
+
+    <string name="input_title">输入区</string>
+    <string name="input_subtitle">送达电脑后自动清空</string>
+    <string name="input_placeholder_waiting">等待连接电脑…</string>
+    <string name="input_placeholder_ready">在这里打字或使用语音输入…</string>
+    <string name="action_send_now">立即发送</string>
+    <string name="action_waiting_ack">等待电脑回执…</string>
+
+    <string name="searching_status">正在搜索附近设备…</string>
+    <string name="search_failed">搜索启动失败，请重试</string>
+    <string name="connect_auto_progress">正在自动连接 %1$s…</string>
+    <string name="connect_progress">正在连接 %1$s…</string>
+    <string name="connect_attempt">正在自动连接 %1$s…（第 %2$d 次尝试）</string>
+    <string name="connected_auto">已自动连接 %1$s</string>
+    <string name="connected">已连接 %1$s</string>
+    <string name="disconnected">连接已断开</string>
+    <string name="delivered">已输入到电脑</string>
+    <string name="input_failed">电脑输入失败：%1$s</string>
+    <string name="unknown_error">未知错误</string>
+    <string name="auto_connect_stopped">已停止自动连接，请选择设备</string>
+    <string name="text_too_long">文本超过 16 KiB，请缩短后发送</string>
+    <string name="sending">正在发送…</string>
+    <string name="ack_timeout">等待电脑回执超时；请确认后手动重发</string>
+    <string name="send_failed">发送失败：%1$s</string>
+    <string name="connection_closed">连接已关闭</string>
+    <string name="connect_create_failed">无法创建蓝牙连接</string>
+    <string name="failure_timeout">电脑未响应，请确认电脑端已开启服务</string>
+    <string name="failure_refused">电脑拒绝了连接，请确认电脑端服务已启动</string>
+    <string name="failure_unknown">请确认电脑端服务已启动，且电脑在附近</string>
+    <string name="connect_failed_auto">自动连接失败：%1$s</string>
+    <string name="connect_failed">连接失败：%1$s</string>
+    <string name="disconnected_manual">已断开</string>
+    <string name="unnamed_device">未命名设备</string>
+</resources>

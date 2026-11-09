@@ -1,0 +1,71 @@
+<resources>
+    <string name="app_name">Мост ввода Bluetooth</string>
+    <string name="tagline">Вводите с телефона — печатайте на компьютере</string>
+
+    <string name="connect_title">Подключиться к ПК</string>
+    <string name="status_ready">Готово</string>
+    <string name="status_preparing">Подготовка автоподключения…</string>
+    <string name="status_connecting_secure">Устанавливается защищённое Bluetooth-соединение…</string>
+    <string name="status_unsupported">Это устройство не поддерживает классический Bluetooth.</string>
+    <string name="status_permissions">Нужно разрешение «Устройства рядом». На старых Android для поиска также нужно разрешение на геоданные.</string>
+    <string name="action_grant">Разрешить</string>
+    <string name="status_bluetooth_off">Включите Bluetooth, чтобы подключиться к сопряжённому ПК.</string>
+    <string name="action_enable_bluetooth">Включить Bluetooth</string>
+    <string name="action_searching">Поиск…</string>
+    <string name="action_search">Найти устройства</string>
+    <string name="action_back_to_input">К вводу</string>
+    <string name="device_list">Устройства</string>
+    <string name="device_list_subtitle">Сортировка по времени последнего подключения в этом приложении</string>
+    <string name="device_list_empty">Устройств нет. Нажмите «Найти устройства».</string>
+    <string name="device_list_footer">На ПК должен работать сервис RFCOMM; для неспаренных устройств включите видимость.</string>
+    <string name="bonded">Сопряжено</string>
+    <string name="nearby">Рядом</string>
+    <string name="just_now">Только что</string>
+
+    <string name="last_device">Последнее устройство</string>
+    <string name="action_devices">Устройства</string>
+    <string name="action_disconnect">Отключить</string>
+    <string name="action_reconnect">Подключиться снова</string>
+    <string name="state_connected">●  Подключено</string>
+    <string name="state_connecting">◌  Подключение</string>
+    <string name="state_disconnected">○  Не подключено</string>
+
+    <string name="auto_send">Автоотправка</string>
+    <string name="auto_send_immediate">Отправка сразу после ввода</string>
+    <string name="auto_send_delay">Отправка через %1$s с после остановки ввода</string>
+    <string name="label_now">Сейчас</string>
+    <string name="label_3s">3 с</string>
+
+    <string name="input_title">Ввод</string>
+    <string name="input_subtitle">Очищается после получения на ПК</string>
+    <string name="input_placeholder_waiting">Ожидание подключения к ПК…</string>
+    <string name="input_placeholder_ready">Печатайте здесь или используйте голосовой ввод…</string>
+    <string name="action_send_now">Отправить</string>
+    <string name="action_waiting_ack">Ожидание ответа ПК…</string>
+
+    <string name="searching_status">Поиск устройств рядом…</string>
+    <string name="search_failed">Не удалось начать поиск. Повторите.</string>
+    <string name="connect_auto_progress">Автоподключение к %1$s…</string>
+    <string name="connect_progress">Подключение к %1$s…</string>
+    <string name="connect_attempt">Автоподключение к %1$s… (попытка %2$d)</string>
+    <string name="connected_auto">Автоподключено к %1$s</string>
+    <string name="connected">Подключено к %1$s</string>
+    <string name="disconnected">Соединение потеряно</string>
+    <string name="delivered">Введено на ПК</string>
+    <string name="input_failed">Ошибка ввода на ПК: %1$s</string>
+    <string name="unknown_error">неизвестная ошибка</string>
+    <string name="auto_connect_stopped">Автоподключение остановлено. Выберите устройство.</string>
+    <string name="text_too_long">Текст больше 16 КиБ. Сократите его.</string>
+    <string name="sending">Отправка…</string>
+    <string name="ack_timeout">ПК не ответил. Проверьте его и отправьте снова.</string>
+    <string name="send_failed">Не удалось отправить: %1$s</string>
+    <string name="connection_closed">Соединение закрыто</string>
+    <string name="connect_create_failed">Не удалось создать Bluetooth-соединение</string>
+    <string name="failure_timeout">ПК не отвечает. Убедитесь, что сервис запущен.</string>
+    <string name="failure_refused">ПК отклонил подключение. Убедитесь, что сервис запущен.</string>
+    <string name="failure_unknown">Убедитесь, что сервис на ПК запущен, а ПК рядом.</string>
+    <string name="connect_failed_auto">Автоподключение не удалось: %1$s</string>
+    <string name="connect_failed">Подключение не удалось: %1$s</string>
+    <string name="disconnected_manual">Отключено</string>
+    <string name="unnamed_device">Устройство без имени</string>
+</resources>
