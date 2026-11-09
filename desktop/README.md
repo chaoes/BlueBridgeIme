@@ -67,10 +67,14 @@ Wayland 下服务不能跨应用确认目标控件实际接收了文本。`ok:tr
 
 ## 验证
 
-已在 OPPO Find X8 与本机 GNOME 51 Wayland 上完成实机验证：安卓连接成功、自动发送文本、PC 端临时 GTK 输入框收到相同文字、安卓收到成功回执。本轮重构后另行验证了 headless 服务独立运行、状态查询、服务注册开关、开机自启开关（systemd `is-enabled` 往返）以及测试输入框的注入（gedit 中收到 `bridge test ✓ 中文行`），并用真实窗口截图确认 900×650 下无滚动。
+已在 OPPO Find X8 与本机 GNOME 51 Wayland 上完成实机验证：安卓连接成功、自动发送文本、PC 端临时 GTK 输入框收到相同文字、安卓收到成功回执。本轮重构后另行验证了 headless 服务独立运行、状态查询、服务注册开关、开机自启开关（systemd `is-enabled` 往返）以及注入通道（直接调服务 API，gedit 中收到 `bridge test ✓ 中文行`），并用真实窗口截图确认 900×650 下无滚动。
 
 ```bash
 cd /home/chao/android-dev/projects/bluetooth-input-bridge/desktop/src-tauri
 cargo check
 cargo test --lib
 ```
+
+## LÖVE 轻量前端
+
+同一套无界面服务还有一个 LÖVE 11.5 前端，位于 [`../love/`](../love/)：设计稿 900×650、按窗口等比缩放、上限 30 FPS 且只在内容变化时重绘，中文字体只读一次。适合低配置、低分辨率电脑。运行方式、打包脚本与限制见 [`../love/README.md`](../love/README.md)。

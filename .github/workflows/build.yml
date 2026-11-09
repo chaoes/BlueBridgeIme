@@ -147,6 +147,44 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # 桌面端的 LÖVE 版界面：官方运行时 + 我们的 .love，顺带给 Linux 包塞进服务二进制。
+  love:
+    name: LÖVE front-end
+    needs: [desktop]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: love
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Download service binary
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-linux
+          path: love/dist/service
+
+      - name: Package LÖVE builds
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.1.0.${GITHUB_RUN_NUMBER}"
+          chmod +x package.sh
+          ./package.sh "$VERSION" dist dist/service/bluetooth-input-bridge-service
+          rm -rf dist/service
+
+      - name: Upload LÖVE packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: love-builds
+          path: |
+            love/dist/*.love
+            love/dist/*.zip
+            love/dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
   # Windows 后端尚未实现，这里先把构建位留好。实现完成后：
   # 1. 去掉 `if` 条件，让 push/PR 也构建；2. 视情况把 exe 一起发 Release。
   desktop-deb:
@@ -264,7 +302,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [android, desktop, desktop-deb, desktop-arch]
+    needs: [android, desktop, desktop-deb, desktop-arch, love]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -280,6 +318,7 @@ jobs:
           cp artifacts/android-apk/*.apk dist/
           cp artifacts/desktop-deb/*.deb dist/
           cp artifacts/desktop-arch/*.pkg.tar.zst dist/
+          cp artifacts/love-builds/*.love artifacts/love-builds/*.zip artifacts/love-builds/*.tar.gz dist/
           cp artifacts/desktop-linux/bluetooth-input-desktop \
              artifacts/desktop-linux/bluetooth-input-bridge-service dist/
           chmod +x dist/bluetooth-input-desktop dist/bluetooth-input-bridge-service
@@ -294,4 +333,6 @@ jobs:
             dist/*.deb
             dist/*.pkg.tar.zst
             dist/*.tar.gz
+            dist/*.zip
+            dist/*.love
           generate_release_notes: true
