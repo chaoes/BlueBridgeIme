@@ -1,75 +1,34 @@
-# 蓝牙输入桥 · Bluetooth Input Bridge
+# BlueBridgeIme · 蓝牙输入桥
 
-把手机当电脑键盘用：手机端（Android）通过经典蓝牙 RFCOMM 把输入的文字发给电脑端（Linux），电脑端把文字注入当前焦点。一个仓库同时容纳两个平台端。
+用手机当电脑键盘：手机连着电脑的蓝牙，打字时电脑当前光标处直接出现文字，不用装接收器、不用连同一个 Wi-Fi，也不用切换窗口。
 
-## 目录结构
+## 功能
 
-```
-android/                     Android 客户端（Jetpack Compose，minSdk 26 / targetSdk 36）
-  app/                       UI、蓝牙连接、自动重连、连接历史、五语资源
-  PROTOCOL.md                手机 ↔ 电脑的线路协议（UUID、JSON 行格式）
-desktop/                     Linux 桌面端
-  src-tauri/src/service/     无界面的 Rust 服务：BlueZ RFCOMM、收包、注入（可脱离 UI 运行）
-  src-tauri/src/bin/         独立的 bluetooth-input-bridge-service 入口
-  src-tauri/src/lib.rs       Tauri 薄壳：只通过本地 socket 与服务工作
-  web/                       前端（原生 HTML/CSS/JS，随时可换技术栈）
-  docs/service-api.md        控制 socket 的命令与状态字段
-  docs/windows.md            Windows 版预留说明与待实现清单
-.github/workflows/build.yml  CI：Android APK、Linux 桌面端、Windows 占位（手动）
-```
+- **手机打字，电脑即收**：手机端每段文字经蓝牙送到电脑，电脑自动粘贴进当前焦点，回执显示是否输入成功。
+- **开机即用**：打开手机 App 直接进入输入界面，自动连接上次使用的电脑；连不上会自动重试，失败时仍停在输入界面并可重新连接。
+- **按使用时间排序**：设备列表按本软件最近连接时间倒序，置顶显示上次那台电脑，并标注「刚刚 / 5 分钟前」。
+- **多行与大文本**：支持中文、emoji、多行文本，单条上限 16 KiB，超长会在手机上提示。
+- **电脑端开关**：蓝牙服务注册（关闭后手机搜不到本机）、开机自启（登录后无界面常驻），状态持久化。
+- **服务与界面分离**：电脑端服务可完全无界面运行，界面只通过本地 socket 读写状态，换前端技术栈不影响服务。
+- **五语界面**：中文、英文、俄语、日语、韩语，跟随系统语言，未匹配时回退英文。
 
-## 快速开始
+## 技术栈
 
-### Android
+- **Android**：Kotlin、Jetpack Compose、Material 3；经典蓝牙 RFCOMM（`e8b6a86a-73ce-4cbb-9ea8-9f9c2fae6d51`），JSON 行协议，逐条回执。
+- **桌面端**：Rust（BlueZ / zbus、tokio）实现蓝牙服务与文字注入；Tauri 2 做薄外壳，前端为原生 HTML/CSS/JS。
+- **输入注入**：Linux Wayland 下用 `wl-copy` 写剪贴板 + `/dev/uinput` 虚拟键盘发 Ctrl+V，粘贴后还原原剪贴板。
+- **进程间通信**：桌面端界面 ↔ 服务走 `$XDG_RUNTIME_DIR` 下的 Unix socket，JSON 行协议，状态订阅推送。
+- **构建与 CI**：Gradle、Cargo、GitHub Actions（APK + Linux 二进制，可选发布签名）。
 
-```bash
-cd android
-./gradlew assembleDebug          # 产物 app/build/outputs/apk/debug/app-debug.apk
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-```
+## 已支持的平台
 
-本机开发环境（非必需）可先 `source /home/chao/android-dev/env.sh` 设置 Android SDK、JDK 与代理。
-
-### Linux 桌面端
-
-```bash
-cd desktop/src-tauri
-cargo build --release            # 生成 bluetooth-input-desktop 与 bluetooth-input-bridge-service
-./target/release/bluetooth-input-bridge-service   # 可单独无界面运行；界面也会自动拉起
-./target/release/bluetooth-input-desktop
-```
-
-依赖（Ubuntu/Debian）：
-
-```bash
-sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
-                 librsvg2-dev libsoup-3.0-dev libssl-dev pkg-config
-```
-
-在 BlueZ + GNOME Wayland 下验证过；界面语言跟随系统（中/英/俄/日/韩，未匹配回退英文）。
-
-## 持续集成
-
-`.github/workflows/build.yml` 在 push（`main`/`master`）、Pull Request 和手动触发时运行：
-
-| 作业 | 平台 | 内容 |
+| 平台 | 状态 | 说明 |
 | --- | --- | --- |
-| `android` | ubuntu-latest | JDK 21 + Android SDK 36；配了签名 Secrets 时 `assembleRelease` 并校验签名，否则 `assembleDebug`，上传 `android-apk` |
-| `desktop` | ubuntu-24.04 | WebKitGTK 依赖 + stable Rust，`cargo build --locked --release --bins`，跑协议单元测试，上传 `desktop-linux` |
-| `windows` | windows-latest | **占位**：只在手动触发且勾选 `build_windows` 时运行，构建出的是未接通后端的 exe |
-| `release` | ubuntu-24.04 | 推送 `v*` 标签时，把 APK 和 Linux `.tar.gz` 发到 Release |
+| Android 8.0+（API 26+） | ✅ 支持 | 手机端，需要经典蓝牙（非 BLE） |
+| Linux x86_64（BlueZ + GNOME Wayland） | ✅ 支持 | 桌面端，含无界面服务与开机自启 |
+| Windows | 🚧 预留 | 界面与 CI 构建位已留好，蓝牙与注入后端尚未实现 |
+| macOS | ❌ 未支持 | — |
 
-## 平台支持
+## 许可证
 
-- **Linux**：完整功能。BlueZ profile 注册、RFCOMM 收发、wl-copy + uinput 注入、systemd 用户服务开机自启。
-- **Windows**：仅预留位置（构建作业、`windows.rs` 边界、[docs/windows.md](desktop/docs/windows.md) 的实现清单）。当前能构建出的桌面端不包含蓝牙与注入后端。
-- **macOS**：未适配。
-
-## 发布
-
-```bash
-git tag v0.2.0
-git push origin main --tags
-```
-
-本地 `assembleRelease` 会自动使用 `android/keystore/`（已 gitignore）里的签名材料；要发正式包到 GitHub Release，把该目录里的 base64、密码、别名配成 `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD` 四个 Secrets，工作流就会改跑 `assembleRelease`、校验证书并附上签名 APK。细节见 [android/README.md](android/README.md#发布签名)。
+本项目以 **GNU General Public License v3.0 or later** 发布，详见 [LICENSE](LICENSE)。
