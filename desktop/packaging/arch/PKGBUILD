@@ -9,6 +9,7 @@ url="https://github.com/chaoes/BlueBridgeIme"
 license=('GPL-3.0-or-later')
 depends=('webkit2gtk-4.1' 'gtk3' 'libsoup3' 'librsvg' 'libevdev' 'openssl')
 makedepends=('rust' 'cargo')
+options=('!debug')
 source=()
 sha256sums=()
 
