@@ -1,0 +1,182 @@
+name: Build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      build_windows:
+        description: "构建 Windows 占位版（后端尚未实现，见 desktop/docs/windows.md）"
+        type: boolean
+        default: false
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK platform and build tools
+        run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Build debug APK
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon --stacktrace assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-reports
+          path: |
+            android/app/build/reports/**
+            android/build/reports/**
+          if-no-files-found: ignore
+          retention-days: 7
+
+  desktop:
+    name: Linux desktop
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Install WebKitGTK and build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libssl-dev \
+            pkg-config
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+
+      - name: Build desktop shell and headless service
+        run: cargo build --locked --release --manifest-path src-tauri/Cargo.toml --bins
+
+      - name: Run protocol unit tests
+        run: cargo test --locked --release --manifest-path src-tauri/Cargo.toml --lib
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux
+          path: |
+            desktop/src-tauri/target/release/bluetooth-input-desktop
+            desktop/src-tauri/target/release/bluetooth-input-bridge-service
+          if-no-files-found: error
+          retention-days: 30
+
+  # Windows 后端尚未实现，这里先把构建位留好。实现完成后：
+  # 1. 去掉 `if` 条件，让 push/PR 也构建；2. 视情况把 exe 一起发 Release。
+  windows:
+    name: Windows (placeholder)
+    if: ${{ inputs.build_windows }}
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+
+      - name: Build placeholder binaries
+        run: cargo build --locked --release --manifest-path src-tauri/Cargo.toml --bins
+
+      - name: Upload placeholder binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows-placeholder
+          path: |
+            desktop/src-tauri/target/release/bluetooth-input-desktop.exe
+            desktop/src-tauri/target/release/bluetooth-input-bridge-service.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [android, desktop]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp artifacts/android-apk/*.apk dist/
+          cp artifacts/desktop-linux/bluetooth-input-desktop \
+             artifacts/desktop-linux/bluetooth-input-bridge-service dist/
+          chmod +x dist/bluetooth-input-desktop dist/bluetooth-input-bridge-service
+          (cd dist && tar -czf bluetooth-input-bridge-linux-x86_64.tar.gz \
+             bluetooth-input-desktop bluetooth-input-bridge-service)
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.apk
+            dist/*.tar.gz
+          generate_release_notes: true

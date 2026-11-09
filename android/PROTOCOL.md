@@ -46,7 +46,7 @@ Windows → 安卓，失败：
 
 安卓端协议与桌面系统无关，**无需修改 APK**。Wayland 桌面可另写 Linux 接收端：用 BlueZ `org.bluez.ProfileManager1.RegisterProfile` 以同一 UUID 注册 RFCOMM 服务，接收 `NewConnection` 提供的文件描述符，按上述 JSON 行协议处理并回传 `ack`。可设置 `RequireAuthentication` 与 `RequireAuthorization`。
 
-现有 [GNOME PC 端实现](../bluetooth-input-desktop/README.md) 已用 Rust + Tauri 完成上述服务。它使用剪贴板加 `/dev/uinput` 的 Ctrl+V 输入；Linux 的成功回执表示粘贴事件已发送，Wayland 无法通用地确认目标控件实际接受文本。请在目标应用验证输入结果，尤其是终端、密码框和禁用粘贴的控件。
+现有 [GNOME PC 端实现](../desktop/README.md) 已用 Rust + Tauri 完成上述服务。它使用剪贴板加 `/dev/uinput` 的 Ctrl+V 输入；Linux 的成功回执表示粘贴事件已发送，Wayland 无法通用地确认目标控件实际接受文本。请在目标应用验证输入结果，尤其是终端、密码框和禁用粘贴的控件。
 
 文本注入需要按桌面合成器选实现。支持 `virtual-keyboard-unstable-v1` 的合成器可以使用虚拟键盘协议，但它发送的是按键事件，中文等任意 Unicode 文本需要额外的输入法或剪贴板方案；有的合成器不开放这个协议。另一种是通过 Linux `/dev/uinput` 创建虚拟键盘，但它同样是按键事件，并需要相应设备访问权限。Wayland 不提供一个跨合成器、可任意写入其他应用焦点文本框的通用接口，因此“检测当前输入框并输入”必须在目标 GNOME、KDE、Sway 等环境逐一验证。无法确认输入成功时应返回失败回执，不能仅凭收到蓝牙字节返回成功。
 

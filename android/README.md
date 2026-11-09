@@ -2,7 +2,7 @@
 
 安卓原生 Compose 应用：搜索经典蓝牙设备、连接 PC RFCOMM 服务、用系统输入法输入文字或语音识别结果。支持 0–3 秒静默自动发送及手动发送；电脑确认收到后清空已发送文字。Windows 客户端接口见 [PROTOCOL.md](PROTOCOL.md)。
 
-GNOME Wayland 的 Rust + Tauri PC 端位于 [bluetooth-input-desktop](../bluetooth-input-desktop/README.md)。
+GNOME Wayland 的 Rust + Tauri PC 端位于 [desktop](../desktop/README.md)。
 
 ## 开发计划与当前实现
 
@@ -18,7 +18,7 @@ GNOME Wayland 的 Rust + Tauri PC 端位于 [bluetooth-input-desktop](../bluetoo
 
 ```bash
 source /home/chao/android-dev/env.sh
-cd /home/chao/android-dev/projects/bluetooth-input-bridge
+cd /home/chao/android-dev/projects/bluetooth-input-bridge/android
 ./gradlew assembleDebug
 ```
 
@@ -26,16 +26,7 @@ APK：`app/build/outputs/apk/debug/app-debug.apk`。最低 Android 8.0（API 26�
 
 ## 持续集成
 
-仓库内置 [.github/workflows/android.yml](.github/workflows/android.yml)：push 到 `main`/`master`、Pull Request、或手动触发（Actions → Run workflow）时，在 Ubuntu + JDK 21（Temurin）+ Android SDK 36 上执行 `./gradlew assembleDebug`。构建好的 APK 在运行页面的 Artifacts 里下载（`bluetooth-input-bridge-debug`，保留 30 天）。推送 `v*` 标签（如 `v1.1`）时还会创建 Release 并附上 APK。
+仓库根目录的 [build.yml](../../.github/workflows/build.yml) 会构建本目录：Ubuntu + JDK 21（Temurin）+ Android SDK 36，执行 `./gradlew assembleDebug`，APK 以 `android-apk` 名字上传（保留 30 天）；推送 `v*` 标签时附到 Release。
 
-该 APK 使用 debug 签名，可直接安装测试；正式分发需要自己的 keystore：把 keystore 内容与密码放进仓库 Secrets，再在工作流里加一个 `assembleRelease` 步骤即可。
+APK 使用 debug 签名，可直接安装测试；正式分发需要自己的 keystore：把它放进仓库 Secrets，再在工作流里加一个 `assembleRelease` 步骤。
 
-把本目录推到 GitHub 后工作流会自动生效：
-
-```bash
-git init -b main
-git add .
-git commit -m "Initial commit"
-git remote add origin git@github.com:<你的用户名>/bluetooth-input-bridge.git
-git push -u origin main
-```

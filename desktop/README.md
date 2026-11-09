@@ -1,6 +1,6 @@
 # 蓝牙输入桥 · GNOME PC 端
 
-桌面端分为两部分：一个**无界面的 Rust 服务**负责蓝牙 RFCOMM、消息解析和文字注入；一个**可替换的前端外壳**（当前为 Tauri 2 + 原生 HTML/CSS/JS）只通过本地控制 socket 读写状态。界面技术栈可以随时更换，服务不受影响，也可以完全脱离界面运行（例如由 systemd 用户服务开机启动）。通信格式和 UUID 与 [协议文档](../bluetooth-input-bridge/PROTOCOL.md) 一致。
+桌面端分为两部分：一个**无界面的 Rust 服务**负责蓝牙 RFCOMM、消息解析和文字注入；一个**可替换的前端外壳**（当前为 Tauri 2 + 原生 HTML/CSS/JS）只通过本地控制 socket 读写状态。界面技术栈可以随时更换，服务不受影响，也可以完全脱离界面运行（例如由 systemd 用户服务开机启动）。通信格式和 UUID 与 [协议文档](../android/PROTOCOL.md) 一致。
 
 ## 结构
 
@@ -20,7 +20,7 @@ docs/service-api.md           # 控制 socket 协议
 需要 Rust、GTK3/WebKit2GTK 4.1 开发库、BlueZ、`wl-copy` / `wl-paste`、可访问的 `/dev/uinput`。
 
 ```bash
-cd /home/chao/android-dev/projects/bluetooth-input-desktop/src-tauri
+cd /home/chao/android-dev/projects/bluetooth-input-bridge/desktop/src-tauri
 cargo build --release
 
 # 只跑服务（无界面，日志在 stderr）
@@ -34,19 +34,9 @@ cargo build --release
 
 ## 持续集成
 
-仓库内置 [.github/workflows/linux.yml](.github/workflows/linux.yml)：push 到 `main`/`master`、Pull Request、或手动触发时，在 Ubuntu 24.04 上安装 WebKitGTK 4.1 等 Tauri 依赖，用稳定版 Rust 执行 `cargo build --release --bins`，并跑 `cargo test --lib` 的协议单元测试。产物 `bluetooth-input-bridge-linux-x86_64` 含 `bluetooth-input-desktop` 与 `bluetooth-input-bridge-service` 两个可执行文件；推送 `v*` 标签时会打包成 `.tar.gz` 发 Release。
+仓库根目录的 [build.yml](../../.github/workflows/build.yml) 的 `desktop` 作业会构建本目录：Ubuntu 24.04 + 稳定版 Rust，安装 WebKitGTK 4.1 等依赖，执行 `cargo build --locked --release --bins` 并跑 `cargo test --locked --lib`；产物 `desktop-linux` 含两个可执行文件，推送 `v*` 标签时打包成 `.tar.gz` 发 Release。
 
-工作流只构建 Linux x86_64：服务使用 BlueZ/zbus，Windows 端目前仍是占位实现。
-
-把本目录推到 GitHub 后工作流会自动生效：
-
-```bash
-git init -b main
-git add .
-git commit -m "Initial commit"
-git remote add origin git@github.com:<你的用户名>/bluetooth-input-desktop.git
-git push -u origin main
-```
+`windows` 作业已经预留好，默认只在手动触发并勾选 `build_windows` 时运行；Windows 后端尚未实现，见 [docs/windows.md](docs/windows.md)。
 
 ## 界面
 
@@ -80,7 +70,7 @@ Wayland 下服务不能跨应用确认目标控件实际接收了文本。`ok:tr
 已在 OPPO Find X8 与本机 GNOME 51 Wayland 上完成实机验证：安卓连接成功、自动发送文本、PC 端临时 GTK 输入框收到相同文字、安卓收到成功回执。本轮重构后另行验证了 headless 服务独立运行、状态查询、服务注册开关、开机自启开关（systemd `is-enabled` 往返）以及测试输入框的注入（gedit 中收到 `bridge test ✓ 中文行`），并用真实窗口截图确认 900×650 下无滚动。
 
 ```bash
-cd /home/chao/android-dev/projects/bluetooth-input-desktop/src-tauri
+cd /home/chao/android-dev/projects/bluetooth-input-bridge/desktop/src-tauri
 cargo check
 cargo test --lib
 ```
