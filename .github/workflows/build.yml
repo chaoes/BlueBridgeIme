@@ -236,14 +236,16 @@ jobs:
         continue-on-error: true
         run: |
           sudo apt-get update
+          # gcc-mingw-w64-x86-64：交叉编 Windows（GNU 目标）时 cc-rs / rustc 要用 dlltool、windres。
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
-            libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev libssl-dev pkg-config
+            libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev libssl-dev pkg-config \
+            gcc-mingw-w64-x86-64
 
       # apt 偶发 429/网络抖动时不要整包失败：缺的库下面那步会逐个报出来。
       - name: Verify dependencies
         run: |
           status=0
-          for dep in libssl-dev libgtk-3-dev librsvg2-dev libsoup-3.0-dev libwebkit2gtk-4.1-dev; do
+          for dep in libssl-dev libgtk-3-dev librsvg2-dev libsoup-3.0-dev libwebkit2gtk-4.1-dev gcc-mingw-w64-x86-64; do
             if ! dpkg -s "$dep" >/dev/null 2>&1; then
               echo "::error title=missing dependency::$dep 没装上（apt 步骤可能因为网络失败，见 ${{ steps.deps.outcome }}）"
               status=1
@@ -412,22 +414,9 @@ jobs:
       # install-action 没有 tauri-cli 的预编译包时会退回到 cargo-binstall，再退回到源码编译，
       # 一次要十几分钟；直接下官方 release 的二进制，几秒钟的事。
       - name: Set up Tauri CLI
-        shell: bash
-        env:
-          TAURI_CLI_VERSION: 2.12.4
-        run: |
-          set -euo pipefail
-          mkdir -p "$HOME/.local/bin"
-          url="https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v${TAURI_CLI_VERSION}/cargo-tauri-x86_64-unknown-linux-gnu.tgz"
-          for attempt in 1 2 3 4 5; do
-            if wget -q -O /tmp/cargo-tauri.tgz "$url"; then break; fi
-            echo "download failed (attempt $attempt)"
-            sleep 5
-          done
-          tar -xzf /tmp/cargo-tauri.tgz -C "$HOME/.local/bin"
-          chmod +x "$HOME/.local/bin/cargo-tauri"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          "$HOME/.local/bin/cargo-tauri" --version
+        uses: taiki-e/install-action@v2
+        with:
+          tool: tauri-cli@2
 
       - name: Build binaries
         run: cargo build --locked --release --manifest-path src-tauri/Cargo.toml --bins
