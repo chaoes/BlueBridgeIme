@@ -311,7 +311,11 @@ jobs:
           rm -rf sdk-cpp && mkdir -p sdk-cpp
           unzip -qo sdk-cpp.zip -d sdk-cpp
           rm -f sdk-cpp.zip
-          find sdk-cpp -iname '*.lib' -exec sh -c 'mv "$1" "$(dirname "$1")/$(basename "$1" | tr "[:upper:]" "[:lower:]")"' _ {} \;
+          # 已经全是小写的（如 ucrtd.osmode_permissive.lib）跳过，否则 mv 到自己是报错退出。
+          find sdk-cpp -type f -iname '*.lib' -exec sh -c '
+            lower=$(echo "$1" | tr "[:upper:]" "[:lower:]")
+            [ "$1" = "$lower" ] || mv "$1" "$lower"
+          ' _ {} \;
           LIBS_UM="$PWD/sdk-cpp/c/um/x64"
           LIBS_UCRT="$PWD/sdk-cpp/c/ucrt/x64"
           # CRT 导入库（libcmt.lib、libvcruntime.lib）：从 VC 运行库安装包里解出来。
