@@ -272,6 +272,13 @@ jobs:
       # 两步分开是为了在注解里直接看到是哪一步失败（job 日志要管理员权限才拉得到）。
       # 用轻量 runner 上的 config-rs 试错期：pkg-config 报错、cargo tauri 不存在之类的问题
       # 一律先打进注解（不中断），打不出安装包就当没有——apk / Linux / LÖVE 包照常发布。
+      # 之前这里只有探测、没有安装，`cargo tauri` 自然是 no such command。
+      # install-action 直接拿官方预编译二进制，不现场编译上百个依赖。
+      - name: Set up Tauri CLI
+        uses: taiki-e/install-action@v2
+        with:
+          tool: tauri-cli@2
+
       - name: Probe Tauri toolchain
         continue-on-error: true
         run: |
@@ -288,7 +295,6 @@ jobs:
       # tauri 自己会再跑一遍 cargo；这里显式指定 target 目录，让它和上面的
       # `cargo build --release --bins` 用同一份产物（走 rust-cache 的同一路径）。
       - name: Prepare Windows target
-        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
@@ -303,7 +309,6 @@ jobs:
           fi
 
       - name: Build Windows installer
-        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
@@ -318,9 +323,6 @@ jobs:
           fi
 
       - name: Collect Windows installer
-        # 安装包这一步是尽力而为：打不出来就当没有，别把 deb 的上传也卡住。
-        if: always()
-        continue-on-error: true
         run: |
           mkdir -p dist
           src=$(ls src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe)
@@ -328,15 +330,11 @@ jobs:
           ls -l dist
 
       - name: Upload Windows installer
-        # 安装包这一步是尽力而为：打不出来就当没有，别把 deb 的上传也卡住。
-        if: always()
-        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: desktop-windows-installer
           path: desktop/dist/*.exe
-          # 尽力而为：打不出来就是没有，上面已经 `continue-on-error`，别在这里再报一次红。
-          if-no-files-found: ignore
+          if-no-files-found: error
           retention-days: 30
 
       - name: Upload .deb
@@ -455,7 +453,7 @@ jobs:
     name: Release
     # 永远跑：Windows 安装包那一步挂掉也不该把 apk、Linux 包、LÖVE 包一起扣下。
     if: always() && startsWith(github.ref, 'refs/tags/v')
-    needs: [android, desktop, desktop-deb, desktop-arch, love]
+    needs: [android, desktop, desktop-deb, desktop-arch, love, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
