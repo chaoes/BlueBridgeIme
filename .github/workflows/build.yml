@@ -319,10 +319,20 @@ jobs:
           LIBS_UM="$PWD/sdk-cpp/c/um/x64"
           LIBS_UCRT="$PWD/sdk-cpp/c/ucrt/x64"
           # CRT 导入库（libcmt.lib、libvcruntime.lib）：从 VC 运行库安装包里解出来。
+          # 先把里面的 cab 抽出来，再解 cab。
           wget -q https://aka.ms/vs/17/release/vc_redist.x64.exe -O vc_redist.x64.exe
-          rm -rf vc-crt && mkdir -p vc-crt
-          cabextract -q -d vc-crt vc_redist.x64.exe || true
+          rm -rf vc-crt vc-sfx && mkdir -p vc-crt vc-sfx
+          cabextract -q -d vc-sfx vc_redist.x64.exe || true
+          for cab in vc-sfx/*.cab; do
+            [ -e "$cab" ] || continue
+            cabextract -q -d vc-crt "$cab" || true
+          done
           LIBS_VC=$(find "$PWD/vc-crt" -type f -iname 'libcmt.lib' -printf '%h\n' | head -n 1)
+          if [ -z "$LIBS_VC" ]; then
+            echo "::warning title=crt not found::vc-crt 里没找到 libcmt.lib，先列出内容便于排查"
+            ls -la vc-sfx || true
+            find "$PWD/vc-crt" -type f | head -n 20 || true
+          fi
           for dir in "$LIBS_UM" "$LIBS_UCRT" "$LIBS_VC"; do
             if [ -z "$dir" ] || [ ! -d "$dir" ]; then
               echo "::error title=no import libraries::缺导入库目录：${dir:-空}"
