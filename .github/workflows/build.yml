@@ -339,27 +339,27 @@ jobs:
           # 再把这两个目录作为 -L native= 交给 rust-lld。
           (
             repo=https://github.com/Jake-Shadle/xwin
-            tag=$(curl -fsSL "https://api.github.com/repos/Jake-Shadle/xwin/releases/latest" | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4)
-            [ -n "$tag" ] || tag=v0.6.5
+            # xwin 0.10.0 的 release 资产是没打散的 tar（少了 .tar.gz 那一层压缩），解出来不是可执行文件，
+            # 这里固定用 0.8.0。
+            tag=0.8.0
             url="$repo/releases/download/${tag}/xwin-${tag}-x86_64-unknown-linux-musl.tar.gz"
             echo "xwin: $url"
             mkdir -p "$HOME/.local/xwin-bin"
-          curl -fsSL "$url" | tar -xz --strip-components=1 -C "$HOME/.local/xwin-bin"
+            curl -fsSL "$url" | tar -xz --strip-components=1 -C "$HOME/.local/xwin-bin"
             ls -l "$HOME/.local/xwin-bin"
-            # xwin 的 --accept-license 是 bool，env 里只能写 true
             export XWIN_ACCEPT_LICENSE=true
             "$HOME/.local/xwin-bin/xwin" --arch x86_64 --cache-dir "$CARGO_TARGET_DIR/xwin" \
               splat --output "$CARGO_TARGET_DIR/xwin/splat"
-            echo "---- xwin 装出来的目录 ----"
-            find "$CARGO_TARGET_DIR/xwin" -maxdepth 4 -type d | sort | head -n 40
-          ) 2>&1 | tail -n 40
-          XWIN_PATHS=$(find "$CARGO_TARGET_DIR/xwin" -mindepth 2 -maxdepth 2 -type d \( -name 'crt' -o -name 'sdk' \) 2>/dev/null | sort | tr '\n' ' ')
-          echo "xwin paths: ${XWIN_PATHS:-none}"
-          if [ -z "$XWIN_PATHS" ]; then
+          ) 2>&1 | tail -n 60
+          # xwin 的 splat 布局是 <splat>/sdk/lib/{um,ucrt}/x86_64 与 <splat>/crt/lib/x86_64，
+          # rust-lld 只认放着 *.lib 的那一级，找含 kernel32.lib / libucrt.lib 的目录一起交给它。
+          XWIN_LIBS=$(find "$CARGO_TARGET_DIR/xwin/splat" -type f \( -iname 'kernel32.lib' -o -iname 'libucrt.lib' \) -printf '%h\n' 2>/dev/null | sort -u | tr '\n' ' ')
+          echo "xwin libs: ${XWIN_LIBS:-none}"
+          if [ -z "$XWIN_LIBS" ]; then
             echo '::error title=xwin::没能准备 Windows SDK（看上面 xwin 的输出）'
             exit 1
           fi
-          SDK_FLAGS="$(for d in $XWIN_PATHS; do printf -- '-L native=%s ' "$d"; done)"
+          SDK_FLAGS="$(for d in $XWIN_LIBS; do printf -- '-L native=%s ' "$d"; done)"
           export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS="$SDK_FLAGS"
           echo "rustflags: $CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS"
           # rust-lld 读取的是 MSVC 风格 /LIBPATH:，用 `-L native=` 交给 rustc 拼出来即可。
