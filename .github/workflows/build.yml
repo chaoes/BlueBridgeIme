@@ -287,15 +287,27 @@ jobs:
         with:
           workspaces: desktop/src-tauri -> target
 
+      # NSIS 不在 runner 的默认镜像里，而 tauri-cli 找不到 makensis 时会去 GitHub 下载
+      # 一个自带工具链（需要出网）。这里显式装一份，并把它放进 PATH，打包就完全离线。
+      # 注意 chocolatey 装出来的是 C:\Program Files (x86)\NSIS，64 位路径上并不存在。
       - name: Install NSIS
         shell: pwsh
         run: |
-          # tauri 的 NSIS 打包器会自己寻找 makensis；找不到就先装好，避免现场下载。
-          if (-not (Get-Command makensis.exe -ErrorAction SilentlyContinue)) {
+          $candidates = @(
+            'C:\Program Files (x86)\NSIS',
+            'C:\Program Files\NSIS',
+            "$env:LOCALAPPDATA\tauri\NSIS"
+          ) | Where-Object { Test-Path (Join-Path $_ 'makensis.exe') }
+          if (-not $candidates) {
             choco install nsis --no-progress -y
-            'C:\Program Files (x86)\NSIS' | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+            $candidates = @('C:\Program Files (x86)\NSIS', 'C:\Program Files\NSIS') |
+              Where-Object { Test-Path (Join-Path $_ 'makensis.exe') }
           }
-          Get-Command makensis.exe | Select-Object -ExpandProperty Source
+          if (-not $candidates) {
+            throw '没有找到 makensis.exe'
+          }
+          $candidates[0] | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          & (Join-Path $candidates[0] 'makensis.exe') /VERSION
 
       # 安装包由 tauri CLI 负责打包；界面二进制仍由下面的 cargo build 产出，
       # tauri 打包时不会重新编译 Rust，只把它和图标、钩子脚本一起塞进 NSIS。
