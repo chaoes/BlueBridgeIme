@@ -299,9 +299,22 @@ jobs:
       # `cargo build --release --bins`（rust-cache 缓存的就是 target/）完全不是一份，
       # 等于整包重编一遍；这里显式指到同一目录复用缓存。
       #
-      # 交叉编译这两个环境变量缺一不可（runner 上没有 llvm-rc，tauri-winres 会 panic）：
-      # CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld 用来链接，
-      # __CARGO_TEST_LLVM_LIB\(=\)true 让 cc-rs 找到 llvm-lib / llvm-rc。
+      # 交叉编译前提：runner 上没有 llvm-rc，tauri-winres 会 panic，所以先装 LLVM，
+      # 再用 CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld 链接。
+      - name: Install LLVM for cross compiling
+        run: |
+          if [ "$(llvm-config --version 2>/dev/null | cut -d. -f1)" -lt 20 ]; then
+            sudo apt-get update -qq || true
+            sudo apt-get install -y llvm lld
+          fi
+          for tool in llvm-rc llvm-lib llvm-ar; do
+            command -v "$tool" || {
+              echo "::error title=$tool missing::$tool 不在 PATH 上，装完 llvm 需要把 /usr/lib/llvm-*/bin 加进来"
+              exit 1
+            }
+          done
+          llvm-config --version
+
       - name: Prepare Windows target
         shell: bash
         run: |
