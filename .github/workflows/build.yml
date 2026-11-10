@@ -301,6 +301,19 @@ jobs:
       #
       # 交叉编译前提：ubuntu runner 自带的 LLVM 缺 llvm-rc（tauri-winres 要用），补装
       # 一份 llvm + lld，并把最新那份的 bin 放到 PATH 最前面。
+      # 链接 Windows 的 exe 需要 MSVC 那套导入库（ole32.lib、user32.lib…），Linux 上没有，
+      # 从微软的 NuGet 包里取出来（只链接期需要）。
+      - name: Install Windows import libraries
+        run: |
+          set -e
+          sudo apt-get install -y unzip >/dev/null
+          wget -q https://www.nuget.org/api/v2/package/Microsoft.Windows.SDK.CPP.x64/10.0.26100.1 -O sdk-cpp.zip
+          rm -rf sdk-cpp && mkdir -p sdk-cpp
+          unzip -qo sdk-cpp.zip -d sdk-cpp
+          rm -f sdk-cpp.zip
+          echo "SDK_CPP_LIB=$PWD/sdk-cpp/c/um/x64" >> "$GITHUB_ENV"
+          ls "$PWD/sdk-cpp/c/um/x64" | grep -E '^(ole32|user32)\.lib$'
+
       - name: Install LLVM for cross compiling
         run: |
           sudo apt-get update -qq || true
@@ -320,6 +333,10 @@ jobs:
           export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld
           # rust-lld 只给 -L 找库；带上 ls 的库反而不行（会按 Linux 的格式去解析），
           # 所以只用 -L 指到 MSVC 导入库目录。
+          if [ -z "$SDK_CPP_LIB" ]; then
+            echo "::error title=SDK_CPP_LIB missing::缺 MSVC 导入库路径，交叉链接会找不到 ole32.lib"
+            exit 1
+          fi
           export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS="-L native=$SDK_CPP_LIB"
           # cc-rs 用这个私有约定变量探测 LLVM 工具链；名字里带 `(=)`，不能用 export，得用 env。
           LLVM_ENV='__CARGO_TEST_LLVM_LIB(=)=true'
