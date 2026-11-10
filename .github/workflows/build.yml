@@ -301,13 +301,7 @@ jobs:
       #
       # 交叉编译前提：ubuntu runner 自带的 LLVM 缺 llvm-rc（tauri-winres 要用），补装
       # 一份 llvm + lld，并把最新那份的 bin 放到 PATH 最前面。
-      # 链接 Windows 的 exe 需要 MSVC 那套导入库（ole32.lib、user32.lib…），Linux 上没有，
-      # 从微软的 NuGet 包 Microsoft.Windows.SDK.CPP.x64 里取（约 50 MB，只链接期需要）。
-      - name: Install Windows import libraries
-        run: |
-          set -e
-          sudo apt-get install -y unzip >/dev/null
-      # libcmt.lib 在 VS 安装包里，VCRedist 的 .exe 是自解压包（结尾是 cab），可以从里面抽出来。
+# libcmt.lib 在 VS 安装包里，VCRedist 的 .exe 是自解压包（结尾是 cab），可以从里面抽出来。
       - name: Install Windows import libraries
         run: |
           set -e
