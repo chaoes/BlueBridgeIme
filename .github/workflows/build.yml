@@ -253,7 +253,35 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.2.0.${GITHUB_RUN_NUMBER}"
           bash packaging/deb/build.sh "$VERSION" amd64 "$PWD/dist"
-      # logs 里看不到失败原因（job 日志要管理员权限），所以把输出写进文件、逐行转成注解。
+      # Linux 上没有 Windows 的库，必须用 --no-bundle 先给出 target 目录，再只打 NSIS。
+      # 两步分开是为了在注解里直接看到是哪一步失败（job 日志要管理员权限才拉得到）。
+      - name: Check Linux dependencies
+        run: |
+          for dep in libssl-dev libgtk-3-dev librsvg2-dev libsoup-3.0-dev; do
+            dpkg -s "$dep" >/dev/null 2>&1 || {
+              echo "::error title=missing dependency::$dep（apt-get install 失败或没有装）"
+              exit 1
+            }
+          done
+          which pkg-config && pkg-config --modversion gtk+-3.0 openssl
+          cargo tauri --version
+
+      # tauri 自己会再跑一遍 cargo；这里显式指定 target 目录，让它和上面的
+      # `cargo build --release --bins` 用同一份产物（走 rust-cache 的同一路径）。
+      - name: Prepare Windows target
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo tauri build --target x86_64-pc-windows-msvc --no-bundle --verbose 2>&1 |
+            tee ../tauri-prep.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            tail -n 30 ../tauri-prep.log | while IFS= read -r line; do
+              echo "::warning title=tauri build::${line:0:600}"
+            done
+            exit "$status"
+          fi
+
       - name: Build Windows installer
         shell: bash
         run: |
@@ -262,7 +290,7 @@ jobs:
             tee ../tauri-nsis.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            tail -n 40 ../tauri-nsis.log | head -n 20 | while IFS= read -r line; do
+            tail -n 30 ../tauri-nsis.log | while IFS= read -r line; do
               echo "::warning title=tauri bundle::${line:0:600}"
             done
             exit "$status"
