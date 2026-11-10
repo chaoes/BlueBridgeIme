@@ -25,7 +25,7 @@ cargo build --locked --release --bins --manifest-path src-tauri/Cargo.toml
 ### .deb（需要 `dpkg-deb`，建议在 Ubuntu/Debian 容器里跑）
 
 ```bash
-packaging/deb/build.sh 0.2.0 amd64 dist
+packaging/deb/build.sh 0.2.1 amd64 dist
 dpkg-deb -I dist/*.deb
 ```
 

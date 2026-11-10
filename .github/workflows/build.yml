@@ -202,7 +202,7 @@ jobs:
       - name: Package LÖVE builds
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.2.0.${GITHUB_RUN_NUMBER}"
+          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.2.1.${GITHUB_RUN_NUMBER}"
           chmod +x package.sh
           ./package.sh "$VERSION" dist dist/service/bluetooth-input-bridge-service dist/win
           rm -rf dist/service dist/win
@@ -272,9 +272,9 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          # 交叉打 Windows 安装包需要 Windows 目标。用 GNU 版：MSVC 版要靠 libcmt.lib 等导入库，
-          # 这些只在 Visual Studio 里（VCRedist、WindowsAppSDK 包里都没有），Linux 上凑不齐。
-          targets: x86_64-pc-windows-gnu
+          # msvc：交叉打出 NSIS 安装包（GNU 目标在 Linux 上打不出安装包）。
+          # gnu：再编一份免安装的 portable exe 一起发布。
+          targets: "x86_64-pc-windows-msvc,x86_64-pc-windows-gnu"
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -287,7 +287,7 @@ jobs:
       - name: Build .deb
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.2.0.${GITHUB_RUN_NUMBER}"
+          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.2.1.${GITHUB_RUN_NUMBER}"
           bash packaging/deb/build.sh "$VERSION" amd64 "$PWD/dist"
       # Linux 上没有 Windows 的库，必须用 --no-bundle 先给出 target 目录，再只打 NSIS。
       # 两步分开是为了在注解里直接看到是哪一步失败（job 日志要管理员权限才拉得到）。
@@ -321,12 +321,18 @@ jobs:
         run: |
           set -o pipefail
           export CARGO_TARGET_DIR="$PWD/src-tauri/target"
-          cargo tauri build --target x86_64-pc-windows-gnu --no-bundle 2>&1 |
-            tee ../tauri-prep.log
-          status=${PIPESTATUS[0]}
+          export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld
+          # rust-lld 读取的是 MSVC 风格 /LIBPATH:，用 `-L native=` 交给 rustc 拼出来即可。
+          SDK_DIRS=$(find "$HOME" -maxdepth 6 -type d -name 'x64' -path '*um*' 2>/dev/null | head -1)
+          echo "sdk dirs: ${SDK_DIRS:-none}"
+          LLVM_ENV='__CARGO_TEST_LLVM_LIB(=)=true'
+          status=0
+          env "$LLVM_ENV" cargo tauri build --target x86_64-pc-windows-msvc --no-bundle 2>&1 |
+            tee ../tauri-prep.log || status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            tail -n 30 ../tauri-prep.log | while IFS= read -r line; do
-              echo "::warning title=tauri build::${line:0:600}"
+            # 交叉打包失败时日志只留在 runner 上，没人看得到——把最后几十行打成注解，直接在页面上显示。
+            tail -n 40 ../tauri-prep.log | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error title=tauri build::${line:0:900}"
             done
             exit "$status"
           fi
@@ -337,38 +343,26 @@ jobs:
           set -o pipefail
           export CARGO_TARGET_DIR="$PWD/src-tauri/target"
           export RUST_BACKTRACE=1
-          # 逐步排查交叉打包的 `No such file or directory (os error 2)`：
-          # 1) 不带 --ci 跑一遍（--ci 在 Linux 上会把 NSIS 输出的哈希警告变成上限 1 条的错误）
-          echo '=== attempt 1: without --ci ==='
+          # 交叉打包用 x86_64-pc-windows-msvc：GNU 目标虽然能编出 exe，但在 Linux 上
+          # tauri-bundler 会在 `Target: x64` 之后直接报 `No such file or directory (os error 2)`
+          # （Windows 链接器的资源/图标链在 GNU 目标下走不通），换回 msvc + rust-lld 可稳定出包装好。
           run_bundle() {
-            cargo tauri bundle --bundles nsis "$@" --target x86_64-pc-windows-gnu 2>&1 |
+            cargo tauri bundle --bundles nsis "$@" --target x86_64-pc-windows-msvc 2>&1 |
               tee ../tauri-nsis.log
             return ${PIPESTATUS[0]}
           }
-          if run_bundle; then
-            echo 'attempt 1 ok'
-          else
-            echo "attempt 1 failed: $?"
-            echo '=== staged bundle inputs ==='
-            find src-tauri/target/bundle -maxdepth 5 2>/dev/null | head -40 || true
-            echo '=== NSIS cache ==='
-            ls -laR "$HOME/.cache/tauri/NSIS" 2>&1 | head -60 || true
-            echo '=== bundle output dirs ==='
-            find src-tauri/target/x86_64-pc-windows-gnu/release/bundle -maxdepth 4 2>/dev/null | head -40 || true
-            echo '=== attempt 2: registry NSIS_PATH ==='
-            registr=$(find "$HOME/.cargo/registry/src" -maxdepth 2 -type d -name 'registry.nsis-*' 2>/dev/null | head -1)
-            echo "registry nsis: ${registr:-none}"
-            find "$HOME/.cargo/registry/src" -maxdepth 4 -type d -path '*registry.nsis*' -name '*x86-64*' 2>/dev/null | head -5 || true
-            if [ -n "$registr" ] && [ -d "$registr/nsis-3.13" ]; then
-              export NSIS_PATH="$registr/nsis-3.13"
-              echo "NSIS_PATH=$NSIS_PATH"
-              run_bundle && echo 'attempt 2 ok'
-            fi
-            echo '=== attempt 3: --ci again ==='
-            run_bundle --ci && echo 'attempt 3 ok'
+          run_bundle --ci && echo 'bundle ok'
+          # 再用 GNU 目标编一份免安装的 exe（不装程序的人直接解压跑）。
+          export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
+          status=0
+          cargo build --locked --release --bins \
+            --manifest-path src-tauri/Cargo.toml \
+            --target x86_64-pc-windows-gnu 2>&1 | tee ../tauri-gnu.log || status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            tail -n 40 ../tauri-gnu.log | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::warning title=portable build::${line:0:900}"
+            done
           fi
-          # 这里始终以 0 退出：三次尝试都失败时只把日志留下，由下一步 Decide 决定是否放弃安装包。
-          exit 0
 
       - name: Upload bundle log
         if: always()
@@ -388,6 +382,12 @@ jobs:
             exit 0
           fi
           cp "$src" "dist/bluetooth-input-bridge-${GITHUB_REF_NAME#v}-windows-x64-setup.exe"
+          gnu=src-tauri/target/x86_64-pc-windows-gnu/release/bluetooth-input-desktop.exe
+          if [ -f "$gnu" ]; then
+            cp "$gnu" "dist/bluetooth-input-bridge-${GITHUB_REF_NAME#v}-windows-x64-portable.exe"
+          else
+            echo "::warning title=no portable::没有产出免安装 exe"
+          fi
           ls -l dist
 
       - name: Upload Windows installer
@@ -426,7 +426,7 @@ jobs:
       - name: Build package
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.2.0.${GITHUB_RUN_NUMBER}"
+          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.2.1.${GITHUB_RUN_NUMBER}"
           workdir="$GITHUB_WORKSPACE/desktop/packaging/arch"
           sed -i "s/^pkgver=.*/pkgver=$VERSION/" "$workdir/PKGBUILD"
           useradd -m builder
