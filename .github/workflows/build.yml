@@ -327,6 +327,30 @@ jobs:
             [ -e "$cab" ] || continue
             cabextract -q -d vc-crt "$cab" || true
           done
+          # cab 里是按文件编号起的名字（a0、a11……），用 7z 认出来再改名。
+          sudo apt-get install -y p7zip-full >/dev/null 2>&1 || true
+          SZ=$(command -v 7z || command -v 7zz || true)
+          echo "7z: ${SZ:-none}"
+          for f in vc-crt/*; do
+            case "$f" in *.lib) continue ;; esac
+            kind=$("$SZ" l "$f" 2>/dev/null | awk '/^Type = /{print $3; exit}')
+            [ "$kind" = "CoffLib" ] && mv "$f" "$f.lib"
+          done
+          if [ -z "$SZ" ]; then
+            # 没有 7z 时按 cab 顺序猜：a0~a4 是 CRT 导入库，最后一个是 libcpmt。
+            echo "::warning title=no 7z::没有 7z，按顺序猜名字"
+            i=0
+            for f in vc-crt/a*; do
+              [ -e "$f" ] || continue
+              case $i in
+                0) mv "$f" vc-crt/libcmt.lib ;;
+                1) mv "$f" vc-crt/libvcruntime.lib ;;
+                2) mv "$f" vc-crt/libucrt.lib ;;
+                *) [ "$f" = "$(ls -v vc-crt/a* | tail -n 1)" ] && mv "$f" vc-crt/libcpmt.lib || mv "$f" "vc-crt/lib$i.lib" ;;
+              esac
+              i=$((i+1))
+            done
+          fi
           LIBS_VC=$(find "$PWD/vc-crt" -type f -iname 'libcmt.lib' -printf '%h\n' | head -n 1)
           if [ -z "$LIBS_VC" ]; then
             echo "::warning title=crt not found::vc-crt 里没找到 libcmt.lib，先列出内容便于排查"
