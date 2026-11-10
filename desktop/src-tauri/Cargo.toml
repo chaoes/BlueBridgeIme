@@ -19,7 +19,7 @@ name = "bluetooth-input-bridge-service"
 path = "src/bin/bridge-service.rs"
 
 [dependencies]
-tauri = { version = "2.12.5" }
+tauri = { version = "2.12.5", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sys-locale = "0.3.2"
@@ -58,4 +58,4 @@ windows = { version = "0.62.2", features = [
 ] }
 
 [build-dependencies]
-tauri-build = { version = "2.7.4" }
+tauri-build = { version = "2.7.4", features = [] }

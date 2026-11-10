@@ -1,4 +1,4 @@
-﻿# Windows 后端：实现说明
+# Windows 后端：实现说明
 
 Windows 端已经实现，与 Linux 端共用同一套线路协议（[PROTOCOL.md](../../android/PROTOCOL.md)）、控制协议（[service-api.md](service-api.md)）和前端（`web/`）。本文记录具体做法、与 Linux 的差异，以及实测中发现、值得写下来的坑。
 
@@ -122,6 +122,46 @@ cargo build --release
 ```
 
 首次使用：Windows 设置里确认蓝牙已打开 → 手机与本机配对 → 启动服务 → 手机 App 里连接。之后再切换窗口都不需要重新配对。
+
+### 安装包（NSIS）
+
+CI 的 `windows` 作业会额外用 `cargo tauri bundle --bundles nsis --ci` 产出
+`bluetooth-input-bridge-<ref>-windows-x64-setup.exe`。它由 tauri 的 NSIS 模板生成，
+`tauri.conf.json` 里做了这些设置：
+
+```json
+"bundle": {
+  "active": true,
+  "targets": ["nsis"],
+  "windows": {
+    "nsis": {
+      "installMode": "both",
+      "languages": ["SimpChinese", "English"],
+      "displayLanguageSelector": true,
+      "customLanguageFiles": {
+        "SimpChinese": "gen/nsis/SimpChinese.nsh",
+        "English": "gen/nsis/English.nsh"
+      },
+      "installerHooks": "gen/nsis/installer-hooks.nsh",
+      "template": "generated-nsis/installer.nsi"
+    }
+  }
+}
+```
+
+要点：
+
+- **可自定义安装位置**：标准 `MUI_PAGE_DIRECTORY` 页面会出现在安装模式之后，点「浏览」即可改目录；`installMode: "both"` 还让用户在「仅为我安装」（无 UAC、装到 `%LOCALAPPDATA%`）/「所有用户」（需要 UAC、装到 `Program Files`）之间选。
+- **安装包是 perMachine、RequireAdministrator 清单**：tauri 的 bundler 会写一份
+  “elevated”应用清单交给 `tauri-build`，这样 NSIS 的提权检测不会误判为绕过。
+- **目录页文案与语言选择框由 `build.rs` 定制**：tauri 的模板里这两处是固定的，而 `MUI_DIRECTORYPAGE_TEXT_*`、`MUI_LANGDLL_ALWAYSSHOW` 都是“立即生效”的宏，必须在 `!insertmacro MUI_PAGE_DIRECTORY` / `.onInit` 之前出现，事后用 `--define` 补不进去。所以 `build.rs` 在本地 cargo registry 里找 `tauri-bundler` 的 `installer.nsi`，按 `gen/nsis/directory-page.patch.nsi`、`gen/nsis/language-selector.patch.nsi`（`=== ANCHOR ===` / `=== REPLACE ===` 两段）做**文本替换**，结果写到 `src-tauri/generated-nsis/installer.nsi`（生成的，已 gitignore），再由 `template` 字段引用。模板升级导致锚点对不上时，`build.rs` 打印警告并跳过该定制，构建不会失败。
+- **双语界面**：`customLanguageFiles` 里的 `.nsh` 是 tauri 自带语言表的副本（`{{product_name}}` 已换成产品名——这些文件不做模板替换），并补了模板读的旧拼写键 `choowHowToInstall`。打包时 makensis 会对该键报 `warning 6030 set multiple times`，属于 tauri 自己也有的已知噪音，不影响产物。
+- **钩子脚本** `desktop/src-tauri/gen/nsis/installer-hooks.nsh`：只清理旧自启值、记录安装目录（`HKCU\Software\bluebridge-ime\InstallDir`）、安装/卸载时结束残留进程、卸载时摘掉自启值。默认**不**写 `Run` 自启，常驻与否交给界面开关。
+- **CI 里用 `bundle` 而不是 `build`**：`cargo install tauri-cli --locked`（CI 用 `taiki-e/install-action` 装），然后 `cargo tauri bundle --bundles nsis --ci`。界面二进制和测试已经由前面的 `cargo build --release --bins` 产出，CLI 只把它打进安装包；`tauri build` 会重新编译一遍，没必要，`--no-bundle` 也不是“不重新编译”的意思。
+  为了让普通 `cargo build` 能编译进前端资源，`build.rs` 会把 `web/` 复制到
+  `src-tauri/generated-dist/` 并设置 `TAURI_ENV_FRONTEND_DIST`；用 CLI 构建时这个变量已由 CLI 提供，`build.rs` 会跳过复制。
+- **`gen/nsis/` 进仓库**：`desktop/.gitignore` 排除了整个 `src-tauri/gen`（里面是 tauri 生成的 schema），而 git 不会进入被排除的目录，所以根级 `!` 规则救不回来。实际做法是提交一个嵌套的 `src-tauri/gen/.gitignore`（`*`、`!.gitignore`、`!nsis/`、`!*.nsh`、`!*.nsi`），并在这几个文件首次加入时用 `git add -f` —— 一旦被跟踪，之后的增删就正常了。
+- 安装包没有代码签名，首次运行会出现 SmartScreen“未知发布者”；GitHub Release 附带的校验和与 tag 是当前唯一可信来源。
 
 ## 已知限制
 

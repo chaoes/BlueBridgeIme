@@ -1,4 +1,4 @@
-﻿name: Build
+name: Build
 
 on:
   push:
@@ -147,7 +147,7 @@ jobs:
   windows:
     name: Windows
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: desktop
@@ -163,11 +163,44 @@ jobs:
         with:
           workspaces: desktop/src-tauri -> target
 
+      # 安装包由 tauri CLI 负责打包；界面二进制仍由下面的 cargo build 产出，
+      # tauri 打包时不会重新编译 Rust，只把它和图标、钩子脚本一起塞进 NSIS。
+      # 用 install-action 而不是 `cargo install tauri-cli`：前者直接下载预编译的官方二进制，
+      # 后者要现场编译上百个依赖、好几分钟。
+      - name: Set up Tauri CLI
+        uses: taiki-e/install-action@v2
+        with:
+          tool: tauri-cli@2
+
       - name: Build binaries
         run: cargo build --locked --release --manifest-path src-tauri/Cargo.toml --bins
 
       - name: Run unit tests
         run: cargo test --locked --lib --manifest-path src-tauri/Cargo.toml
+
+      # 用 bundle 子命令而不是 build：build 会自己再跑一遍 cargo（前面的缓存和测试白费），
+      # bundle 只打包“已经构建好的”release 二进制，这正是我们上一步的产物。
+      # 前端的静态文件由 src-tauri/build.rs 复制到 generated-dist 并写入
+      # TAURI_ENV_FRONTEND_DIST，所以不需要 beforeBuildCommand，也不需要额外的前端工具链。
+      # 产物：src-tauri/target/release/bundle/nsis/*_<版本>_x64-setup.exe
+      # 安装向导含“安装模式”“目录选择”两页，用户可以自己选安装（解压）位置。
+      - name: Build installer
+        run: cargo tauri bundle --bundles nsis --ci
+
+      - name: Verify installer output
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem 'src-tauri/target/release/bundle/nsis/*.exe'
+          if (-not $setup) {
+            throw '没有生成 NSIS 安装包'
+          }
+          foreach ($file in $setup) {
+            "{0}  {1:N0} 字节" -f $file.Name, $file.Length
+          }
+          # 复制一份带平台后缀的名字，Release 里好区分
+          $suffix = ($env:GITHUB_REF_NAME -replace '/', '-')
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $setup[0].FullName "dist/bluetooth-input-bridge-${suffix}-windows-x64-setup.exe"
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4
@@ -179,10 +212,18 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows-installer
+          path: desktop/dist/*.exe
+          if-no-files-found: error
+          retention-days: 30
+
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [android, desktop]
+    needs: [android, desktop, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -198,9 +239,12 @@ jobs:
           cp artifacts/android-apk/*.apk dist/
           cp artifacts/desktop-linux/bluetooth-input-desktop \
              artifacts/desktop-linux/bluetooth-input-bridge-service dist/
+          cp artifacts/desktop-windows-installer/*.exe dist/
           chmod +x dist/bluetooth-input-desktop dist/bluetooth-input-bridge-service
           (cd dist && tar -czf bluetooth-input-bridge-linux-x86_64.tar.gz \
              bluetooth-input-desktop bluetooth-input-bridge-service)
+          (cd dist && sha256sum *.apk *.tar.gz *.exe > SHA256SUMS.txt)
+          ls -l dist
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -208,4 +252,6 @@ jobs:
           files: |
             dist/*.apk
             dist/*.tar.gz
+            dist/*.exe
+            dist/SHA256SUMS.txt
           generate_release_notes: true

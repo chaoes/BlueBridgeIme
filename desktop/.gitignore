@@ -1,3 +1,8 @@
 /src-tauri/target
+# tauri 生成的 schema 目录；其中的 src-tauri/gen/nsis/ 安装器定制脚本用嵌套的
+# gen/.gitignore 重新包含（git 不会进入被排除的目录，根级 ! 规则救不回来）。
 /src-tauri/gen
+/src-tauri/generated-dist
+# build.rs 从 tauri-bundler 模板补丁生成
+/src-tauri/generated-nsis
 .DS_Store

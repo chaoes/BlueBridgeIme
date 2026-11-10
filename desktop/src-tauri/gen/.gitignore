@@ -1,0 +1,5 @@
+*
+!.gitignore
+!nsis/
+!nsis/**
+!nsis/*.nsh

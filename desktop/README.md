@@ -1,4 +1,4 @@
-﻿# 蓝牙输入桥 · 桌面 PC 端
+# 蓝牙输入桥 · 桌面 PC 端
 
 桌面端分为两部分：一个**无界面的 Rust 服务**负责蓝牙 RFCOMM、消息解析和文字注入；一个**可替换的前端外壳**（当前为 Tauri 2 + 原生 HTML/CSS/JS）只通过本地控制通道读写状态。界面技术栈可以随时更换，服务不受影响，也可以完全脱离界面运行（例如开机自启）。Linux 与 Windows 两套后端共用同一个协议与前端。通信格式和 UUID 与 [协议文档](../android/PROTOCOL.md) 一致。
 
@@ -53,11 +53,30 @@ cargo build --release
 
 Windows 下蓝牙走 Win32 蓝牙 Winsock（`AF_BTH` + `WSASetService`），文字注入走 `SendInput` + `KEYEVENTF_UNICODE`，实测能直接打进前台输入框、不碰剪贴板。控制通道是命名管道 `\\.\pipe\bluetooth-input-bridge-control`，开机自启写注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`。缘由、踩过的坑与实测记录见 [docs/windows.md](docs/windows.md)。
 
+### Windows 安装包
+
+不想自己编译的话，用 Release 页或 CI 产物里的安装包 `bluetooth-input-bridge-<版本>-windows-x64-setup.exe`：
+
+1. 双击运行。安装向导依次是：欢迎 → 许可 → **安装模式**（仅为我安装，不需要管理员权限；或为所有用户安装，会弹 UAC）→ **目录选择页**（可以点「浏览」把程序装到你想要的位置）→ 开始菜单文件夹 → 安装 → 完成页（可勾选「创建桌面快捷方式」「安装后启动」）。
+2. 向导默认语言跟随系统，也可以在启动时选择中文 / English。
+3. 卸载走「应用和功能」或开始菜单里的 Uninstall；安装目录会被整体删除，日志与配置在 `%APPDATA%\bluebridge-ime`，会保留下来（重装可沿用，想彻底清掉手动删这个目录即可）。
+4. 安装包本身没有代码签名，Windows 可能提示「未知发布者」，选择「更多信息 → 仍要运行」即可。
+
+安装后开始菜单里是 `Bluetooth Input Bridge`：主程序是界面（`bluetooth-input-desktop.exe`），旁边的 `bluetooth-input-bridge-service.exe` 是界面自动拉起、也可以单独运行的无界面服务。安装包默认**不**注册开机自启——需要的话在界面里打开「开机自启」开关，它会按实际安装位置写入。
+
 ## 持续集成
 
 仓库根目录的 [build.yml](../../.github/workflows/build.yml) 的 `desktop` 作业会构建本目录：Ubuntu 24.04 + 稳定版 Rust，安装 WebKitGTK 4.1 等依赖，执行 `cargo build --locked --release --bins` 并跑 `cargo test --locked --lib`；产物 `desktop-linux` 含两个可执行文件，推送 `v*` 标签时打包成 `.tar.gz` 发 Release。
 
-`windows` 作业在 `windows-latest` 上执行同样的 `cargo build --locked --release --bins` 与 `cargo test --locked --lib`，产物 `desktop-windows` 含两个 `.exe`。Windows 后端的实现说明见 [docs/windows.md](docs/windows.md)。
+`windows` 作业在 `windows-latest` 上执行 `cargo build --locked --release --bins` 与 `cargo test --locked --lib`，然后调用 `cargo tauri bundle --bundles nsis --ci` 生成**可自定义安装位置**的安装包（NSIS）：
+
+- 用 `bundle` 而不是 `tauri build`：界面二进制和测试已经由前面的 `cargo build` 产出，`tauri build` 会再完整编译一遍，白费缓存和几分钟时间。
+- 安装包配置在 `src-tauri/tauri.conf.json`（`bundle.targets = ["nsis"]`、`bundle.windows.nsis.installMode = "both"`、简体中文/英文双语、`customLanguageFiles` 指向 `gen/nsis/{SimpChinese,English}.nsh`），安装/卸载钩子脚本在 `src-tauri/gen/nsis/installer-hooks.nsh`；`gen/` 本来被 `.gitignore` 排除（里面是 tauri 生成的 schema），这里用嵌套的 `src-tauri/gen/.gitignore` 只把它重新包含进来，这几个文件是用 `git add -f` 首次加入跟踪的。
+- 「安装位置」这一页与启动时的语言选择框由 `build.rs` 定制：它在本地 cargo registry 里找到 `tauri-bundler` 自带的 `installer.nsi`，按 `gen/nsis/*.patch.nsi`（`=== ANCHOR ===` / `=== REPLACE ===` 两段）插入 `MUI_DIRECTORYPAGE_TEXT_*`、`MUI_LANGDLL_ALWAYSSHOW`，结果写到生成的 `src-tauri/generated-nsis/installer.nsi`（已 gitignore）。tauri 模板升级后锚点若变化，`build.rs` 会打印警告并跳过该定制，不会让构建失败——届时对照 patch 文件头注释更新锚点即可。
+- CI 里用 `cargo install tauri-cli` 拿 `tauri` 命令；界面二进制由普通 `cargo build` 产出，前端静态资源通过 `build.rs` 复制到 `generated-dist/` 并设 `TAURI_ENV_FRONTEND_DIST`，所以不需要 `beforeBuildCommand`，也不需要额外的前端工具链。
+- 产物两个：`desktop-windows` 含两个裸 `.exe`，`desktop-windows-installer` 含 `bluetooth-input-bridge-<ref>-windows-x64-setup.exe`；打 `v*` 标签时安装包也会进 Release，并和 APK/Linux 包一起写进 `SHA256SUMS.txt`。
+
+Windows 后端的实现说明见 [docs/windows.md](docs/windows.md)。
 
 ## 界面
 
