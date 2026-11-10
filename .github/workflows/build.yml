@@ -308,14 +308,23 @@ jobs:
         run: |
           set -e
           sudo apt-get install -y unzip >/dev/null
-          wget -q https://www.nuget.org/api/v2/package/Microsoft.Windows.SDK.CPP.arm64/10.0.26100.1 -O sdk-cpp.zip
+          wget -q https://www.nuget.org/api/v2/package/Microsoft.Windows.SDK.CPP.x64/10.0.26100.1 -O sdk-cpp.zip
           ls -la sdk-cpp.zip
           rm -rf sdk-cpp && mkdir -p sdk-cpp
           unzip -qo sdk-cpp.zip -d sdk-cpp
           rm -f sdk-cpp.zip
-          # SDK 包是扁平的，所有 .lib 直接在包根目录下。用绝对路径，
-          # 否则 dirname 得到 "."，写进 GITHUB_ENV 后在下个步骤里是空目录。
-          LIBS="$PWD/sdk-cpp"
+          # 真正的库在 c/um/x64 和 c/ucrt/x64 下（x64 包才有），链接器从两者都能找到。
+          # 必须用绝对路径：相对路径写进 GITHUB_ENV 后，下个步骤里会被当作相对工作目录解析。
+          LIBS_UM="$PWD/sdk-cpp/c/um/x64"
+          LIBS_UCRT="$PWD/sdk-cpp/c/ucrt/x64"
+          for dir in "$LIBS_UM" "$LIBS_UCRT"; do
+            if [ ! -f "$dir/ole32.lib" ]; then
+              echo "::error title=no import libraries::包里没找到 ole32.lib（$dir）"
+              exit 1
+            fi
+          done
+          echo "SDK_CPP_LIB=$LIBS_UM;$LIBS_UCRT" >> "$GITHUB_ENV"
+          echo "import libs: $LIBS_UM + $LIBS_UCRT"; ls "$LIBS_UM" | wc -l
           if [ -z "$LIBS" ] || [ ! -d "$LIBS" ]; then
             echo "::error title=no import libraries::包里没找到 ole32.lib，路径不对"
             exit 1
@@ -346,7 +355,8 @@ jobs:
             echo "::error title=SDK_CPP_LIB missing::缺 MSVC 导入库路径，交叉链接会找不到 ole32.lib"
             exit 1
           fi
-          export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS="-L native=$SDK_CPP_LIB"
+          SDK_FLAGS="$(printf -- "-L native=%s " $(echo "$SDK_CPP_LIB" | tr ';' ' '))"
+          export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS="$SDK_FLAGS"
           # cc-rs 用这个私有约定变量探测 LLVM 工具链；名字里带 `(=)`，不能用 export，得用 env。
           LLVM_ENV='__CARGO_TEST_LLVM_LIB(=)=true'
           env "$LLVM_ENV" cargo tauri build --target x86_64-pc-windows-msvc --no-bundle 2>&1 |
