@@ -306,6 +306,10 @@ jobs:
     defaults:
       run:
         working-directory: desktop
+        # 别用默认的 bash：windows-latest 上的 bash 是 Git Bash，里面没有 node.exe，
+        # tauri CLI 探测 NSIS 时会跑 `node --version`，找不到就整步失败（退出码 1、0 秒结束）。
+        # 默认是 pwsh，想在测试脚本里开调试就在该步骤自己写 `shell: pwsh` + `$DebugPreference`。
+        shell: pwsh
     steps:
       - name: Check out
         uses: actions/checkout@v4
@@ -420,13 +424,16 @@ jobs:
       - name: Build installer
         id: bundle
         run: |
-          rm -rf ../tauri-nsis.log
-          set -x
-          cargo tauri bundle --bundles nsis --ci 2>&1 | tee ../tauri-nsis.log
-          status=${PIPESTATUS[0]}
-          set +x
-          echo "cargo tauri bundle 退出码：$status"
-          exit $status
+          # Windows 上这一步用 pwsh 跑（见作业级别的 defaults.run.shell），
+          # 不要在这里写 bash 语法。退出码交给下一步判断。
+          $env:RUST_BACKTRACE = '1'
+          $ErrorActionPreference = 'Continue'
+          cargo tauri bundle --bundles nsis --ci 2>&1 |
+            Tee-Object -FilePath ../tauri-nsis.log
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output "cargo tauri bundle 退出码：$LASTEXITCODE"
+            exit $LASTEXITCODE
+          }
 
       - name: Verify installer output
         if: always()
@@ -485,7 +492,8 @@ jobs:
 
   release:
     name: Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    # 永远跑：Windows 安装包那一步挂掉也不该把 apk、Linux 包、LÖVE 包一起扣下。
+    if: always() && startsWith(github.ref, 'refs/tags/v')
     needs: [android, desktop, desktop-deb, desktop-arch, love]
     runs-on: ubuntu-24.04
     permissions:
