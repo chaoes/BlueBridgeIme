@@ -253,8 +253,20 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.2.0.${GITHUB_RUN_NUMBER}"
           bash packaging/deb/build.sh "$VERSION" amd64 "$PWD/dist"
+      # logs 里看不到失败原因（job 日志要管理员权限），所以把输出写进文件、逐行转成注解。
       - name: Build Windows installer
-        run: cargo tauri bundle --bundles nsis --ci --target x86_64-pc-windows-msvc
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo tauri bundle --bundles nsis --ci --target x86_64-pc-windows-msvc 2>&1 |
+            tee ../tauri-nsis.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            tail -n 40 ../tauri-nsis.log | head -n 20 | while IFS= read -r line; do
+              echo "::warning title=tauri bundle::${line:0:600}"
+            done
+            exit "$status"
+          fi
 
       - name: Collect Windows installer
         run: |
