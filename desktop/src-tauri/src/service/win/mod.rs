@@ -29,6 +29,7 @@ pub mod injection;
 pub mod rfcomm;
 pub mod service;
 pub mod session;
+pub mod socket_bridge;
 
 use std::sync::Arc;
 

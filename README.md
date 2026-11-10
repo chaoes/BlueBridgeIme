@@ -15,10 +15,11 @@
 ## 技术栈
 
 - **Android**：Kotlin、Jetpack Compose、Material 3；经典蓝牙 RFCOMM（`0000e8b6-0000-1000-8000-00805f9b34fb`），JSON 行协议，逐条回执。
-- **桌面端**：Rust + tokio 实现蓝牙服务与文字注入；Tauri 2 做薄外壳，前端为原生 HTML/CSS/JS。Linux 用 BlueZ / zbus，Windows 用 Win32 蓝牙 Winsock（`AF_BTH` + `WSASetService`）。另有一个 LÖVE 11.5 轻量前端（[`love/`](love/)），布局相同、等比缩小，适合低配与低分辨率电脑。
+- **桌面端**：Rust + tokio 实现蓝牙服务与文字注入；Tauri 2 做薄外壳，前端为原生 HTML/CSS/JS。Linux 用 BlueZ / zbus，Windows 用 Win32 蓝牙 Winsock（`AF_BTH` + `WSASetService`）。另有一个 LÖVE 11.5 轻量前端（[`love/`](love/)），布局相同、等比缩小，适合低配与低分辨率电脑；Linux 与 Windows 都能用，Windows 上由一个小型 Rust 转接程序把命名管道接成 Unix socket。
 - **输入注入**：Linux Wayland 下用 `wl-copy` 写剪贴板 + `/dev/uinput` 虚拟键盘发 Ctrl+V，粘贴后还原原剪贴板；Windows 下用 `SendInput` + `KEYEVENTF_UNICODE` 把字符事件直接送进前台焦点控件，不碰剪贴板。
-- **进程间通信**：桌面端界面 ↔ 服务，Linux 走 `$XDG_RUNTIME_DIR` 下的 Unix socket、Windows 走命名管道 `\\.\pipe\bluetooth-input-bridge-control`，同为 JSON 行协议，状态订阅推送。
+- **进程间通信**：桌面端界面 ↔ 服务，Linux 走 `$XDG_RUNTIME_DIR` 下的 Unix socket、Windows 走命名管道 `\\.\pipe\bluetooth-input-bridge-control`，同为 JSON 行协议，状态订阅推送。LÖVE 前端（Lua）只会连 Unix socket，因此在 Windows 上附带 `bluetooth-input-bridge-socket.exe` 做管道 ↔ socket 的双向转发。
 - **构建与 CI**：Gradle、Cargo、GitHub Actions（APK、Linux 二进制、Linux 的 .deb、Arch 包、LÖVE 三平台包、Windows 安装包，可选发布签名）。
+- **版本**：当前为 `0.2.0`，首个同时支持 Linux 与 Windows 的 LÖVE 前端版本。
 
 ## 已支持的平台
 
@@ -26,7 +27,7 @@
 | --- | --- | --- |
 | Android 8.0+（API 26+） | ✅ 支持 | 手机端，需要经典蓝牙（非 BLE） |
 | Linux x86_64（BlueZ + GNOME Wayland） | ✅ 支持 | 桌面端，含无界面服务与开机自启；提供 .deb、Arch 包与免安装 tarball，另有自带服务的 LÖVE 包 |
-| Windows 10/11 x64 | ✅ 支持 | 桌面端，Win32 蓝牙 RFCOMM + SendInput 直输（不经过剪贴板），含无界面服务与开机自启，提供 NSIS 安装包 |
+| Windows 10/11 x64 | ✅ 支持 | 桌面端，Win32 蓝牙 RFCOMM + SendInput 直输（不经过剪贴板），含无界面服务与开机自启，提供 NSIS 安装包；另有自带服务与 socket 转接的 LÖVE 包 |
 | macOS | ❌ 未支持 | 仅提供 LÖVE 界面包（`love/`），无服务后端 |
 
 ## 许可证

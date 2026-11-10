@@ -33,6 +33,19 @@ ui.C = C
 
 local ffi_ok, ffi = pcall(require, 'ffi')
 
+-- 运行平台：'Windows' / 'Linux' / 'OSX' / 'Other'。LuaJIT 的 ffi.os 在 LÖVE 的
+-- 所有桌面运行时上都可用；没有 FFI 时退回 package.config 的目录分隔符判断。
+local function detect_os()
+  if ffi and ffi.os then return ffi.os end
+  local sep = package and package.config and package.config:sub(1, 1)
+  if sep == '\\' then return 'Windows' end
+  if sep == '/' then return 'Linux' end
+  return 'Other'
+end
+
+ui.os = detect_os()
+ui.is_windows = ui.os == 'Windows'
+
 local fonts = {}
 local cjk_data = nil
 local cjk_scanned = false
@@ -239,9 +252,9 @@ function ui.draw(frame)
   text_at(t.brand, 16.5, pad_x + 13, 14, C.text, false)
   text_at(t.tagline, 10, pad_x + 13, 35, C.mint, false)
   local meta
-  if ffi and ffi.os == 'Windows' then
+  if ui.is_windows then
     meta = 'Windows · LÖVE'
-  elseif ffi and ffi.os == 'OSX' then
+  elseif ui.os == 'OSX' then
     meta = 'macOS · LÖVE'
   else
     meta = 'Linux · LÖVE'
@@ -312,7 +325,16 @@ function ui.draw(frame)
   local toggle_w = (iw - 10) / 2
   ui.rects.registration = { x = ix, y = toggles_y, w = toggle_w, h = 40 }
   ui.rects.autostart = { x = ix + toggle_w + 10, y = toggles_y, w = toggle_w, h = 40 }
-  draw_toggle(t.registrationTitle, st and st.registrationEnabled and t.registrationNoteOn or t.registrationNoteOff,
+  -- 注册开关的副标题随平台变化：Linux 是 BlueZ，Windows 是 SDP 记录。
+  local registration_note
+  if st and st.registrationEnabled then
+    registration_note = (ui.is_windows and t.registrationNoteOnWindows)
+      or (ui.os == 'Linux' and t.registrationNoteOnLinux)
+      or t.registrationNoteOn
+  else
+    registration_note = t.registrationNoteOff
+  end
+  draw_toggle(t.registrationTitle, registration_note,
     st and st.registrationEnabled, not running, ix, toggles_y, toggle_w, 40, inside(ui.rects.registration, hdx, hdy))
   draw_toggle(t.autostartTitle, t.autostartNote, st and st.autostartEnabled, not running,
     ix + toggle_w + 10, toggles_y, toggle_w, 40, inside(ui.rects.autostart, hdx, hdy))
@@ -340,8 +362,10 @@ function ui.draw(frame)
   local giw = gw - 34
   text_at(t.guideTitle, 15.5, gix, gy + 18, C.text, false)
   local intro_y = gy + 44
-  local intro_h = para_h(t.guideIntro, 11.5, giw)
-  para(t.guideIntro, 11.5, gix, intro_y, giw, C.muted)
+  -- Windows 后端用 SendInput 模拟按键，不走剪贴板，指引要说清楚。
+  local intro_text = (ui.is_windows and t.guideIntroWindows) or t.guideIntro
+  local intro_h = para_h(intro_text, 11.5, giw)
+  para(intro_text, 11.5, gix, intro_y, giw, C.muted)
 
   local step_y = intro_y + intro_h + 10
   local steps = { t.guideStep1, t.guideStep2, t.guideStep3 }
@@ -365,6 +389,11 @@ function ui.draw(frame)
   love.graphics.print(label, sx(gix + btn_w / 2) - f:getWidth(label) / 2, sy(btn_y + (btn_h - f:getHeight() / ui.scale) / 2))
 
   local pair_note = t.pairingHint
+  if ui.is_windows and t.pairingHintWindows then
+    pair_note = t.pairingHintWindows
+  elseif ui.os == 'Linux' and t.pairingHintLinux then
+    pair_note = t.pairingHintLinux
+  end
   if frame.pairing_message and frame.pairing_message ~= '' then
     pair_note = frame.pairing_message
   end
@@ -426,7 +455,9 @@ function ui.draw(frame)
   love.graphics.setScissor()
 
   -- footer ---------------------------------------------------------------
-  local method = (st and st.injectionMethod) or 'wl-copy + uinput Ctrl+V'
+  local method = (st and st.injectionMethod)
+    or (ui.is_windows and 'SendInput + KEYEVENTF_UNICODE')
+    or 'wl-copy + uinput Ctrl+V'
   local sep = needs_cjk(t.footerMethod) and '：' or ': '
   text_at(t.footerMethod .. sep .. method, 9.5, pad_x, footer_y, C.dim)
   text_right(t.footerPrivacy, 9.5, ui.W - pad_x, footer_y, C.dim)

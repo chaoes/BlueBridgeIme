@@ -145,7 +145,7 @@ jobs:
 # 桌面端的 LÖVE 版界面：官方运行时 + 我们的 .love，顺带给 Linux 包塞进服务二进制。
   love:
     name: LÖVE front-end
-    needs: [desktop]
+    needs: [desktop, windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
@@ -161,13 +161,20 @@ jobs:
           name: desktop-linux
           path: love/dist/service
 
+      # Windows 的 LÖVE 包里要放服务二进制和命名管道转接程序。
+      - name: Download Windows binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-windows
+          path: love/dist/win
+
       - name: Package LÖVE builds
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.1.0.${GITHUB_RUN_NUMBER}"
+          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.2.0.${GITHUB_RUN_NUMBER}"
           chmod +x package.sh
-          ./package.sh "$VERSION" dist dist/service/bluetooth-input-bridge-service
-          rm -rf dist/service
+          ./package.sh "$VERSION" dist dist/service/bluetooth-input-bridge-service dist/win
+          rm -rf dist/service dist/win
 
       - name: Upload LÖVE packages
         uses: actions/upload-artifact@v4
@@ -213,7 +220,7 @@ jobs:
       - name: Build .deb
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.1.0.${GITHUB_RUN_NUMBER}"
+          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.2.0.${GITHUB_RUN_NUMBER}"
           bash packaging/deb/build.sh "$VERSION" amd64 "$PWD/dist"
 
       - name: Upload .deb
@@ -244,7 +251,7 @@ jobs:
       - name: Build package
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.1.0.${GITHUB_RUN_NUMBER}"
+          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.2.0.${GITHUB_RUN_NUMBER}"
           workdir="$GITHUB_WORKSPACE/desktop/packaging/arch"
           sed -i "s/^pkgver=.*/pkgver=$VERSION/" "$workdir/PKGBUILD"
           useradd -m builder
@@ -336,6 +343,7 @@ jobs:
           path: |
             desktop/src-tauri/target/release/bluetooth-input-desktop.exe
             desktop/src-tauri/target/release/bluetooth-input-bridge-service.exe
+            desktop/src-tauri/target/release/bluetooth-input-bridge-socket.exe
           if-no-files-found: error
           retention-days: 30
 

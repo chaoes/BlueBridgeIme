@@ -136,6 +136,11 @@ function love.resize()
   dirty = true
 end
 
+-- 退出时收尾：Windows 上通知 socket 桥退出并删掉它的控制套接字；Linux 上是空操作。
+function love.quit()
+  pcall(Service.stop_bridge)
+end
+
 function love.update(dt)
   Service.update(dt)
   local now = love.timer.getTime()
@@ -242,7 +247,12 @@ function love.run()
     if love.event then
       love.event.pump()
       for name, a, b, c, d, e, f in love.event.poll() do
-        if name == 'quit' then return 0 end
+        -- 少了这一句，自定义主循环下 love.quit 永远收不到 quit 事件，
+        -- Windows 的 socket 桥会残留。
+        if name == 'quit' then
+          if love.quit then love.quit() end
+          return 0
+        end
         love.handlers[name](a, b, c, d, e, f)
       end
     end

@@ -132,3 +132,10 @@ Windows 后端在本机（Windows 11 Pro 26200、Realtek 蓝牙适配器、MSVC 
 ## LÖVE 轻量前端
 
 同一套无界面服务还有一个 LÖVE 11.5 前端，位于 [`../love/`](../love/)：设计稿 900×650、按窗口等比缩放、上限 30 FPS 且只在内容变化时重绘，中文字体只读一次。适合低配置、低分辨率电脑。运行方式、打包脚本与限制见 [`../love/README.md`](../love/README.md)。
+
+Linux 与 Windows 都支持。LÖVE 是 Lua 程序，只会连 Unix 套接字，所以在 Windows 上附带一个小型转接程序 `bluetooth-input-bridge-socket.exe`（本仓库 `src/bin/socket-bridge.rs`）：它在 `%TEMP%\bluetooth-input-bridge-<界面进程号>\control.sock` 监听，把每次连接原样转发到命名管道 `\\.\pipe\bluetooth-input-bridge-control`，不解析内容。LÖVE 侧连不上时会依次拉起转接程序、再拉起服务；界面退出时转接程序随之退出并删掉套接字文件。Tauri 版不需要这个转接程序，因为它直接说命名管道。
+
+Windows 上跑通这条链路踩过两个坑，都在 `love/src/service.lua` 里注释说明，改动前建议先看：
+
+- `WSASocketA` 的协议参数必须传 `0`。传 `IPPROTO_TCP(6)` 会被拒（`WSAEAFNOSUPPORT 10043`），LuaJIT 侧则必须显式声明 `WSASocketA`——`ws2_32` 没有 `socket()`，写成 `ws.socket(...)` 会落到未声明符号的兜底上，返回 0 且不报错，于是 `connect()` 看着“成功”，界面永远停在「正在启动服务」。
+- `sockaddr_un` 在 Windows 与 POSIX 两段 `cdef` 里只能声明一次，否则 `ffi.cdef` 整体失败、`native` 为假，界面同样连不上。

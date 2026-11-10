@@ -1,7 +1,17 @@
 #!/usr/bin/env sh
 # Build the LÖVE front-end into a portable .love plus per-platform bundles.
 #
-#   ./package.sh [version] [outdir] [service-binary]
+#   ./package.sh [version] [outdir] [linux-service-binary] [windows-binary-dir]
+#
+# 第 3 个参数是 Linux 服务二进制（可选）；第 4 个参数是「放 Windows 两个 exe 的
+# 目录」（可选），脚本从里面取
+#   $winbin/bluetooth-input-bridge-service.exe   服务的命名管道后端
+#   $winbin/bluetooth-input-bridge-socket.exe    命名管道 → AF_UNIX 桥
+# 桥也可以用环境变量单独指定（优先级更高）：
+#   BLUETOOTH_INPUT_BRIDGE_SOCKET_EXE=path/to/bluetooth-input-bridge-socket.exe
+#
+# CI 里的典型调用：
+#   ./package.sh "$VERSION" dist dist/service/bluetooth-input-bridge-service dist/win
 #
 # Bundles embed the official LÖVE 11.5 runtime (zlib/libpng licensed). The
 # runtime binaries are downloaded unmodified; only the game archive is added on
@@ -11,6 +21,8 @@ set -eu
 version=${1:-dev}
 out=${2:-dist}
 service=${3:-}
+winbin=${4:-}
+bridge=${BLUETOOTH_INPUT_BRIDGE_SOCKET_EXE:-}
 root=$(cd "$(dirname "$0")" && pwd)
 out_abs=$(mkdir -p "$out" && cd "$out" && pwd)
 work=$(mktemp -d)
@@ -45,6 +57,10 @@ BlueBridgeIme — LÖVE 前端
 Linux 包里带有 bluetooth-input-bridge-service，界面连接不上时会尝试
 在 .love 旁边启动它；也可以自己用 systemd 管理（见 desktop/README.md）。
 
+Windows 包里带有 bluetooth-input-bridge-service.exe 与
+bluetooth-input-bridge-socket.exe（把服务的命名管道转成本机 AF_UNIX 套接字）。
+界面连不上时会自己拉起这两个程序，退出时把它们关掉，不需要管理员权限。
+
 刷新率上限 30 FPS，并且只在界面内容变化时重绘。
 
 LÖVE 运行时按 zlib/libpng 许可证分发（见 LICENSE-love.txt），未做修改。
@@ -75,6 +91,10 @@ chmod +x "$work/linux/run.sh"
 echo "built $name-linux-x86_64.tar.gz"
 
 # --- Windows (fused executable) ---------------------------------------------
+# 桥（bluetooth-input-bridge-socket.exe，命名管道 → AF_UNIX）和 Windows 服务
+# （bluetooth-input-bridge-service.exe）必须一起放进包里，界面才能连上。
+# 两个 exe 都从 $winbin（第 4 个参数）取，桥也可用环境变量覆盖。
+# 注意：第 3 个参数是 Linux 服务二进制，绝不能改名成 .exe 塞进 Windows 包。
 fetch love-11.5-win64.zip
 mkdir -p "$work/win"
 unzip -q "$work/love-11.5-win64.zip" -d "$work/win"
@@ -82,6 +102,24 @@ win=$(dirname "$(find "$work/win" -name love.exe -type f | head -1)")
 # LÖVE 会读取附加在 exe 末尾的 zip，因此一个 exe 就够，无需拖动。
 cat "$win/love.exe" "$work/game.love" > "$win/BlueBridgeIme.exe"
 cp "$root/LICENSE-love.txt" "$win/"
+win_service=$winbin/bluetooth-input-bridge-service.exe
+if [ ! -f "$win_service" ] && [ -n "$service" ] && [ -f "$service" ]; then
+  # 兼容：显式传入的就是 Windows 服务本体时也能用。
+  case "$service" in
+    *.exe) win_service=$service ;;
+  esac
+fi
+if [ -f "$win_service" ]; then
+  cp "$win_service" "$win/bluetooth-input-bridge-service.exe"
+else
+  echo "warning: 没有找到 Windows 服务（$winbin/bluetooth-input-bridge-service.exe），Windows 包将无法收发文字" >&2
+fi
+win_bridge=${bridge:-$winbin/bluetooth-input-bridge-socket.exe}
+if [ -f "$win_bridge" ]; then
+  cp "$win_bridge" "$win/bluetooth-input-bridge-socket.exe"
+else
+  echo "warning: 没有提供桥（$winbin/bluetooth-input-bridge-socket.exe），Windows 包将无法连接服务" >&2
+fi
 readme "$win/README.txt"
 (cd "$win" && zip -9 -q -r "$out_abs/$name-windows-x86_64.zip" .)
 echo "built $name-windows-x86_64.zip"

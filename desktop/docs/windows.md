@@ -166,6 +166,24 @@ CI 的 `windows` 作业会额外用 `cargo tauri bundle --bundles nsis --ci` 产
 - **`gen/nsis/` 进仓库**：`desktop/.gitignore` 排除了整个 `src-tauri/gen`（里面是 tauri 生成的 schema），而 git 不会进入被排除的目录，所以根级 `!` 规则救不回来。实际做法是提交一个嵌套的 `src-tauri/gen/.gitignore`（`*`、`!.gitignore`、`!nsis/`、`!*.nsh`、`!*.nsi`），并在这几个文件首次加入时用 `git add -f` —— 一旦被跟踪，之后的增删就正常了。
 - 安装包没有代码签名，首次运行会出现 SmartScreen“未知发布者”；GitHub Release 附带的校验和与 tag 是当前唯一可信来源。
 
+### LÖVE 前端与 socket 桥
+
+LÖVE 前端（[`../love/`](../love/)）是 Lua + LuaJIT FFI，只认 `sockaddr_un`，说不了命名管道，因此在 Windows 上多一个转接程序 `bluetooth-input-bridge-socket.exe`（`src/bin/socket-bridge.rs` + `src/service/win/socket_bridge.rs`）：
+
+```text
+LÖVE ──AF_UNIX──▶ %TEMP%\bluetooth-input-bridge-<pid>\control.sock
+     ──[桥：纯字节双向转发，不解析]──▶ \\.\pipe\bluetooth-input-bridge-control ──▶ 服务
+```
+
+要点：
+
+- **AF_UNIX 用裸 WinSock 实现**：rustc 1.99.1 的 `std::os::windows::net::UnixStream` 仍是 unstable（`windows_unix_domain_sockets`），而且没实现 tokio 的 `AsyncRead/AsyncWrite`；CI 用稳定版工具链，所以这里 `WSASocketW(AF_UNIX, SOCK_STREAM, …, WSA_FLAG_OVERLAPPED)` + `bind`/`listen` + `WSAPoll` 轮询 accept，再用 `TcpStream::from_raw_socket` 把句柄提升成 tokio 流（Windows 上那个 wrapper 底层就是个注册到 IOCP 的 SOCKET，与地址族无关）。
+- **协议参数必须是 `0`**：`WSASocketW(AF_UNIX, SOCK_STREAM, IPPROTO_TCP)` 返回 `WSAEAFNOSUPPORT 10043`（“请求的协议还没有在系统中配置”）。
+- **路径上限 107 字节**（`sockaddr_un.sun_path`），超了就换成扁平短名 `…\bluetooth-input-bridge-<pid>.sock`，绝不截断。界面侧把 6 个候选路径都试一遍，可用 `BLUETOOTH_INPUT_BRIDGE_SOCKET_DIR` 覆盖。
+- **单实例锁与 `--stop` 都按路径派生**（`127.0.0.1` 上 `[37000, 41000)` 的端口），所以同一路径只允许一个桥；`--stop --parent <pid>` 连一下就让它自己清理退出。
+- **生命周期跟随界面**：`--parent <界面 pid>` 每秒 `OpenProcess(SYNCHRONIZE)` 查一次，界面消失 → 删套接字 + 删目录 → 退出；桥不会自己拉起服务（界面按「先连 → 拉桥 → 等 3 秒 → 拉服务」的顺序发起）。
+- 实测（本机 Windows 11）：`verify-bridge.py` 用 ctypes 直接连套接字，16 项全过——状态查询、未知命令/坏 JSON 原样透传、`--stop` 清理、父进程退出后桥 ≤1 s 退出、不同父进程的桥并存。
+
 ## 已知限制
 
 - 只读控件（例如某些列表项）接受焦点但没有输入能力，`SendInput` 可能返回成功而文字被丢弃——没有用 UIA 逐个验证控件可写（跨进程 UIA 查询延迟高，会挤占 8 秒回执预算），这是这里的取舍。

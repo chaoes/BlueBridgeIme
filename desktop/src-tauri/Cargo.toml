@@ -1,6 +1,6 @@
 [package]
 name = "bluetooth-input-desktop"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 build = "build.rs"
@@ -17,6 +17,11 @@ path = "src/main.rs"
 [[bin]]
 name = "bluetooth-input-bridge-service"
 path = "src/bin/bridge-service.rs"
+
+# LÖVE 前端用的 AF_UNIX ⇄ 命名管道适配器（Windows only，见 service/win/socket_bridge.rs）。
+[[bin]]
+name = "bluetooth-input-bridge-socket"
+path = "src/bin/socket-bridge.rs"
 
 [dependencies]
 tauri = { version = "2.12.5", features = [] }
