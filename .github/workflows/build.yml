@@ -346,9 +346,7 @@ jobs:
             mkdir -p "$HOME/.local/xwin-bin"
           curl -fsSL "$url" | tar -xz --strip-components=1 -C "$HOME/.local/xwin-bin"
             ls -l "$HOME/.local/xwin-bin"
-            # xwin 0.10 的参数叫 --include-debug-runtime / --include-debug-symbols
-          "$HOME/.local/xwin-bin/xwin" --accept-license --arch x86_64 \
-            --include-debug-runtime --include-debug-symbols \
+            "$HOME/.local/xwin-bin/xwin" --accept-license --arch x86_64 \
               --output "$CARGO_TARGET_DIR/xwin" splat
           ) 2>&1 | tail -n 40
           XWIN_PATHS=$(find "$CARGO_TARGET_DIR/xwin" -mindepth 2 -maxdepth 2 -type d \( -name 'crt' -o -name 'sdk' \) 2>/dev/null | sort | tr '\n' ' ')
