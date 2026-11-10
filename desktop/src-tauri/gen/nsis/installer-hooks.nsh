@@ -19,6 +19,10 @@
 ; 语法提示：本文件会被 NSIS 原样插进 installer.nsi（include 位置在 tauri 模板第 36 行，
 ; 早于所有页面定义），所以这里写裸语句，不要再套一层 !macro。这里 !define 的宏只有
 ; 在插入点之后才可见，跨段请用运行时命令（WriteRegStr / DeleteRegValue / ReadRegStr）。
+; 文件开头 include 的 LogicLib 只在插入点之后可见，PREUNINSTALL 宏体
+; 要等模板里 !insertmacro 时才展开，那段代码属于后续 Section，所以能用。
+
+!include LogicLib.nsh
 
 ; ---- NSIS_PREINSTALL ----------------------------------------------------
 !macro NSIS_HOOK_PREINSTALL
@@ -34,13 +38,37 @@
 !macroend
 
 ; ---- NSIS_PREUNINSTALL --------------------------------------------------
+; 先结束可能还在跑的服务/界面进程，否则蓝牙 SDP 记录和管道会一直被占用到重启。
+;
+; 注意：这里【不】用 taskkill 写日志。进程本来就没在跑时 taskkill 会打印
+;   「错误: 没有找到进程 “xxx.exe”。」并以 128 退出，
+; 而 NSIS 把 *:: 插件的任何非零返回值当错误显示在日志框和“详细信息”里，
+; 卸载明明成功的用户会以为出了问题（之前就这么踩过）。
+;
+; 也不能用 nsProcess：tauri 自带的 NSIS 里没有这个插件（不联网下载插件，CI 与本地行为一致）。
+; 所以只用内置插件 nsExec + 一个很小的 System::Call 检测：
+;   0 = ERROR_SUCCESS = 进程存在，否则 87 / 5 = 找不到进程（顺带覆盖 UIPI 拒绝的情况）。
+; 全程静默，只有“真的杀掉了”才写一行日志。
 !macro NSIS_HOOK_PREUNINSTALL
-  nsExec::ExecToLog 'taskkill /F /IM bluetooth-input-bridge-service.exe'
-  Pop $0
-  nsExec::ExecToLog 'taskkill /F /IM bluetooth-input-desktop.exe'
-  Pop $0
+  !insertmacro BIB_KillIfRunning "bluetooth-input-bridge-service.exe" "服务进程"
+  !insertmacro BIB_KillIfRunning "bluetooth-input-desktop.exe" "界面进程"
+
+  ; tauri 模板在 PREUNINSTALL 之后还会跑一次 RestartManager 版的
+  ; CheckIfAppIsRunning（按文件占用检测界面程序），那个归模板管，这里不重复。
 !macroend
 
+!macro BIB_KillIfRunning EXE_NAME LABEL
+  StrCpy $R8 0
+  System::Call 'kernel32::CreateMutex(p 0, i 0, t "${EXE_NAME}") p .r7 ?e'
+  System::Call 'kernel32::CloseHandle(p r7)'
+  ${If} $R8 == 0
+    nsExec::Exec 'taskkill /F /IM ${EXE_NAME}'
+    Pop $0
+    ${If} $0 == "0"
+      DetailPrint "已结束正在运行的${LABEL}"
+    ${EndIf}
+  ${EndIf}
+!macroend
 ; ---- NSIS_POSTUNINSTALL -------------------------------------------------
 !macro NSIS_HOOK_POSTUNINSTALL
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "BluetoothInputBridge"
