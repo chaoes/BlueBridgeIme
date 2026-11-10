@@ -334,8 +334,6 @@ jobs:
           fi
           command -v llvm-rc || true
           # rust-lld 读取的是 MSVC 风格 /LIBPATH:，用 `-L native=` 交给 rustc 拼出来即可。
-          SDK_DIRS=$(find "$HOME" -maxdepth 6 -type d -name 'x64' -path '*um*' 2>/dev/null | head -1)
-          echo "sdk dirs: ${SDK_DIRS:-none}"
           LLVM_ENV='__CARGO_TEST_LLVM_LIB(=)=true'
           status=0
           env "$LLVM_ENV" cargo tauri build --target x86_64-pc-windows-msvc --no-bundle 2>&1 |
