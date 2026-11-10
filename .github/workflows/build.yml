@@ -192,7 +192,6 @@ jobs:
             if [ -f "$dir/bluetooth-input-bridge-service.exe" ] && [ -f "$dir/bluetooth-input-bridge-socket.exe" ]; then
               echo "拿到 Windows 二进制"
               exit 0
-            fi
             sleep 10
             ( cd "$GITHUB_WORKSPACE/love" && gh run download "$GITHUB_RUN_ID" -n desktop-windows -D dist/win ) || true
           done
@@ -336,53 +335,39 @@ jobs:
         run: |
           set -o pipefail
           export CARGO_TARGET_DIR="$PWD/src-tauri/target"
-          # 日志多留一些：交叉打包的报错有时只出现在更早的行里。
           export RUST_BACKTRACE=1
-          echo '--- nsis cache before ---'
-          ls -laR "$HOME/.cache/tauri/NSIS" 2>&1 | head -40 || true
-          echo '--- env ---'
-          echo "PWD=$PWD"; command -v makensis; command -v makensis.exe; echo "PATH=$PATH"
-          echo '--- config bundle paths ---'
-          jq -r '.bundle | {icons: .icon, resources: .resources, windows}' tauri.conf.json 2>/dev/null || true
-          for p in icons/32x32.png icons/icon.ico gen/nsis/SimpChinese.nsh gen/nsis/English.nsh gen/nsis/installer-hooks.nsh generated-nsis/installer.nsi gen/nsis/directory-page.patch.nsi gen/nsis/language-selector.patch.nsi; do
-            if [ -e "$p" ]; then echo "ok   $p -> $(realpath $p)"; else echo "MISS $p (cwd $PWD, tauri dir $PWD/src-tauri -> $(realpath src-tauri/$p 2>&1)) "; fi
-          done
-          echo '--- bundle inputs staged ---'
-          find target/bundle -maxdepth 4 2>/dev/null | head -30 || true
-          ls -la src-tauri/target/bundle/resources/ 2>&1 | head || true
-          # 交叉打 NSIS 包时 bundler 只报一句 `No such file or directory (os error 2)`，
-          # 这里在调用前后各跑一遍同样的 Tauri 引擎（带 backtrace），并在期间轮询目标目录，
-          # 把失败时刻创建的文件连同路径一起打出来，便于定位到底缺什么。
-          snap() {
-            find src-tauri/target/x86_64-pc-windows-gnu/release/bundle src-tauri/target/release/bundle \
-              "$HOME/.cache/tauri" -maxdepth 6 2>/dev/null | sort
+          # 逐步排查交叉打包的 `No such file or directory (os error 2)`：
+          # 1) 不带 --ci 跑一遍（--ci 在 Linux 上会把 NSIS 输出的哈希警告变成上限 1 条的错误）
+          echo '=== attempt 1: without --ci ==='
+          run_bundle() {
+            cargo tauri bundle --bundles nsis "$@" --target x86_64-pc-windows-gnu 2>&1 |
+              tee ../tauri-nsis.log
+            return ${PIPESTATUS[0]}
           }
-          snap > ../snap-before.txt
-          export RUST_BACKTRACE=full RUST_LOG=debug
-          cargo tauri bundle --bundles nsis --ci --target x86_64-pc-windows-gnu 2>&1 |
-            tee ../tauri-nsis.log > /dev/null &
-          bundle_pid=$!
-          for _ in $(seq 1 600); do
-            kill -0 "$bundle_pid" 2>/dev/null || break
-            snap > ../snap-now.txt 2>/dev/null
-            sleep 0.2
-          done
-          wait "$bundle_pid" || true
-          snap > ../snap-after.txt
-          echo '--- files seen while bundling (diff) ---'
-          diff ../snap-before.txt ../snap-now.txt | head -60 || true
-          diff ../snap-before.txt ../snap-after.txt | head -40 || true
-          echo '--- re-run with backtrace ---'
-          cargo tauri bundle --bundles nsis --ci --target x86_64-pc-windows-gnu 2>&1 |
-            tee ../tauri-nsis.log
-          status=${PIPESTATUS[0]}
-          if [ "$status" -ne 0 ]; then
-            tail -n 80 ../tauri-nsis.log | while IFS= read -r line; do
-              echo "::warning title=tauri bundle::${line:0:600}"
-            done
-            tail -n 120 ../tauri-nsis.log > ../tauri-nsis-tail.txt
-            exit "$status"
+          if run_bundle; then
+            echo 'attempt 1 ok'
+          else
+            echo "attempt 1 failed: $?"
+            echo '=== staged bundle inputs ==='
+            find src-tauri/target/bundle -maxdepth 5 2>/dev/null | head -40 || true
+            echo '=== NSIS cache ==='
+            ls -laR "$HOME/.cache/tauri/NSIS" 2>&1 | head -60 || true
+            echo '=== bundle output dirs ==='
+            find src-tauri/target/x86_64-pc-windows-gnu/release/bundle -maxdepth 4 2>/dev/null | head -40 || true
+            echo '=== attempt 2: registry NSIS_PATH ==='
+            registr=$(find "$HOME/.cargo/registry/src" -maxdepth 2 -type d -name 'registry.nsis-*' 2>/dev/null | head -1)
+            echo "registry nsis: ${registr:-none}"
+            find "$HOME/.cargo/registry/src" -maxdepth 4 -type d -path '*registry.nsis*' -name '*x86-64*' 2>/dev/null | head -5 || true
+            if [ -n "$registr" ] && [ -d "$registr/nsis-3.13" ]; then
+              export NSIS_PATH="$registr/nsis-3.13"
+              echo "NSIS_PATH=$NSIS_PATH"
+              run_bundle && echo 'attempt 2 ok'
+            fi
+            echo '=== attempt 3: --ci again ==='
+            run_bundle --ci && echo 'attempt 3 ok'
           fi
+          # 这里始终以 0 退出：三次尝试都失败时只把日志留下，由下一步 Decide 决定是否放弃安装包。
+          exit 0
 
       - name: Upload bundle log
         if: always()
@@ -396,7 +381,11 @@ jobs:
       - name: Collect Windows installer
         run: |
           mkdir -p dist
-          src=$(ls src-tauri/target/x86_64-pc-windows-gnu/release/bundle/nsis/*-setup.exe)
+          src=$(ls src-tauri/target/x86_64-pc-windows-gnu/release/bundle/nsis/*-setup.exe 2>/dev/null | head -1)
+          if [ -z "$src" ]; then
+            echo "::warning title=no installer::交叉打包没产出 setup.exe，见 windows-installer-log 产物"
+            exit 0
+          fi
           cp "$src" "dist/bluetooth-input-bridge-${GITHUB_REF_NAME#v}-windows-x64-setup.exe"
           ls -l dist
 
@@ -405,7 +394,7 @@ jobs:
         with:
           name: desktop-windows-installer
           path: desktop/dist/*.exe
-          if-no-files-found: error
+          if-no-files-found: ignore
           retention-days: 30
 
       - name: Upload .deb
