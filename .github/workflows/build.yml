@@ -301,19 +301,19 @@ jobs:
       #
       # 交叉编译前提：runner 上没有 llvm-rc，tauri-winres 会 panic，所以先装 LLVM，
       # 再用 CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld 链接。
+      # ubuntu-24.04 runner 自带的 LLVM 缺 llvm-rc（tauri-winres 要用），补装一份，
+      # 并把最新那份的 bin 放到 PATH 最前面。
       - name: Install LLVM for cross compiling
         run: |
-          if [ "$(llvm-config --version 2>/dev/null | cut -d. -f1)" -lt 20 ]; then
-            sudo apt-get update -qq || true
-            sudo apt-get install -y llvm lld
+          sudo apt-get update -qq || true
+          sudo apt-get install -y llvm lld || sudo apt-get install -y llvm-${LLVM_VERSION:-19} lld-${LLVM_VERSION:-19}
+          LLVM_BIN=$(dirname "$(ls -d /usr/lib/llvm-*/bin/llvm-rc 2>/dev/null | sort -V | tail -n 1)")
+          if [ -z "$LLVM_BIN" ] || [ ! -x "$LLVM_BIN/llvm-rc" ]; then
+            echo "::error title=llvm-rc missing::没找到 llvm-rc，交叉编译 Windows 安装包需要它"
+            exit 1
           fi
-          for tool in llvm-rc llvm-lib llvm-ar; do
-            command -v "$tool" || {
-              echo "::error title=$tool missing::$tool 不在 PATH 上，装完 llvm 需要把 /usr/lib/llvm-*/bin 加进来"
-              exit 1
-            }
-          done
-          llvm-config --version
+          echo "$LLVM_BIN" >> "$GITHUB_PATH"
+          "$LLVM_BIN/llvm-rc" --version
 
       - name: Prepare Windows target
         shell: bash
