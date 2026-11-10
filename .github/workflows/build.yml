@@ -313,7 +313,9 @@ jobs:
           rm -rf sdk-cpp && mkdir -p sdk-cpp
           unzip -qo sdk-cpp.zip -d sdk-cpp
           rm -f sdk-cpp.zip
-          LIBS=$(dirname "$(find sdk-cpp -name ole32.lib | head -n 1)")
+          # SDK 包是扁平的，所有 .lib 直接在包根目录下。用绝对路径，
+          # 否则 dirname 得到 "."，写进 GITHUB_ENV 后在下个步骤里是空目录。
+          LIBS="$PWD/sdk-cpp"
           if [ -z "$LIBS" ] || [ ! -d "$LIBS" ]; then
             echo "::error title=no import libraries::包里没找到 ole32.lib，路径不对"
             exit 1
