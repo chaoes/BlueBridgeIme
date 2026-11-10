@@ -349,7 +349,7 @@ jobs:
             ls -l "$HOME/.local/xwin-bin"
             export XWIN_ACCEPT_LICENSE=true
             "$HOME/.local/xwin-bin/xwin" --arch x86_64 --cache-dir "$CARGO_TARGET_DIR/xwin" \
-              splat --output "$CARGO_TARGET_DIR/xwin/splat"
+              splat --include-debug-libs --output "$CARGO_TARGET_DIR/xwin/splat"
           ) 2>&1 | tail -n 60
           # xwin 的 splat 布局是 <splat>/sdk/lib/{um,ucrt}/x86_64 与 <splat>/crt/lib/x86_64，
           # rust-lld 只认放着 *.lib 的那一级，找含 kernel32.lib / libucrt.lib 的目录一起交给它。
