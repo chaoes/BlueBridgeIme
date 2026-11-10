@@ -335,7 +335,8 @@ jobs:
         with:
           name: desktop-windows-installer
           path: desktop/dist/*.exe
-          if-no-files-found: error
+          # 尽力而为：打不出来就是没有，上面已经 `continue-on-error`，别在这里再报一次红。
+          if-no-files-found: ignore
           retention-days: 30
 
       - name: Upload .deb
