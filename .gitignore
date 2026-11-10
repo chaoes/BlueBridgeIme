@@ -1,3 +1,8 @@
 .DS_Store
+
+# desktop/src-tauri/gen（tauri 生成的 schema）由 desktop/.gitignore 排除；
+# 其中 gen/nsis/ 的安装器定制脚本用嵌套的 gen/.gitignore 重新包含。
+
+# LÖVE 前端打包产物
 love/dist/
 love/*.love

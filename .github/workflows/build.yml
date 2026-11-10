@@ -6,11 +6,6 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
-    inputs:
-      build_windows:
-        description: "构建 Windows 占位版（后端尚未实现，见 desktop/docs/windows.md）"
-        type: boolean
-        default: false
 
 concurrency:
   group: build-${{ github.ref }}
@@ -147,10 +142,12 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # 桌面端的 LÖVE 版界面：官方运行时 + 我们的 .love，顺带给 Linux 包塞进服务二进制。
+# 桌面端的 LÖVE 版界面：官方运行时 + 我们的 .love，顺带给 Linux 包塞进服务二进制。
   love:
     name: LÖVE front-end
     needs: [desktop]
+    # 只在打标签（或手动触发）时出包（Windows 二进制来自 windows 作业的产物）。
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
@@ -166,13 +163,49 @@ jobs:
           name: desktop-linux
           path: love/dist/service
 
+      # Windows 的 LÖVE 包里要放服务二进制和命名管道转接程序。
+      # Windows 包要带上服务与 socket 桥（artifact 由 windows 作业上传）。
+      # 放在这里而不是 needs 里：Windows 作业跑挂了也不该拖住其余平台的发布，
+      # 拿不到就跳过，只是少一个 zip。
+      # 不能先下载再等：download-artifact 在产物还没上传时直接失败，之后也不会重试，
+      # 所以轮询这同一个步骤，每次失败都吞掉，直到两个 exe 都拿到（最多 20 分钟）。
+      - name: Wait for Windows binaries
+        id: win
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-windows
+          path: love/dist/win
+          run-id: ${{ github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          merge-multiple: false
+
+      # download-artifact@v4 在产物还没上传时直接失败，之后不再重试，所以再单独轮询一次，
+      # 每次失败都吞掉，直到两个 exe 都拿到（最多 20 分钟）。
+      - name: Retry Windows binaries
+        if: always()
+        shell: bash
+        run: |
+          dir=dist/win
+          for i in $(seq 1 40); do
+            if [ -f "$dir/bluetooth-input-bridge-service.exe" ] && [ -f "$dir/bluetooth-input-bridge-socket.exe" ]; then
+              echo "拿到 Windows 二进制"
+              exit 0
+            fi
+            sleep 10
+            ( cd "$GITHUB_WORKSPACE/love" && gh run download "$GITHUB_RUN_ID" -n desktop-windows -D dist/win ) || true
+          done
+          echo "提示：没等到 Windows 二进制，只出其余平台的包"
+          exit 0
+
       - name: Package LÖVE builds
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.1.0.${GITHUB_RUN_NUMBER}"
+          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.2.0.${GITHUB_RUN_NUMBER}"
           chmod +x package.sh
-          ./package.sh "$VERSION" dist dist/service/bluetooth-input-bridge-service
-          rm -rf dist/service
+          ./package.sh "$VERSION" dist dist/service/bluetooth-input-bridge-service dist/win
+          rm -rf dist/service dist/win
 
       - name: Upload LÖVE packages
         uses: actions/upload-artifact@v4
@@ -185,8 +218,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # Windows 后端尚未实现，这里先把构建位留好。实现完成后：
-  # 1. 去掉 `if` 条件，让 push/PR 也构建；2. 视情况把 exe 一起发 Release。
   desktop-deb:
     name: Debian package
     # 打标签和手动触发时构建；普通 push/PR 不跑，避免占用时间。
@@ -201,13 +232,49 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install system dependencies
+        id: deps
+        continue-on-error: true
         run: |
           sudo apt-get update
+          # gcc-mingw-w64-x86-64：交叉编 Windows（GNU 目标）时 cc-rs / rustc 要用 dlltool、windres。
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
-            libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev libssl-dev pkg-config
+            libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev libssl-dev pkg-config \
+            gcc-mingw-w64-x86-64 nsis
+
+      # apt 偶发 429/网络抖动时不要整包失败：缺的库下面那步会逐个报出来。
+      - name: Verify dependencies
+        run: |
+          status=0
+          for dep in libssl-dev libgtk-3-dev librsvg2-dev libsoup-3.0-dev libwebkit2gtk-4.1-dev gcc-mingw-w64-x86-64 nsis; do
+            if ! dpkg -s "$dep" >/dev/null 2>&1; then
+              echo "::error title=missing dependency::$dep 没装上（apt 步骤可能因为网络失败，见 ${{ steps.deps.outcome }}）"
+              status=1
+            fi
+          done
+          pkg-config --modversion gtk+-3.0 openssl 2>&1 || true
+          command -v makensis && makensis -VERSION || true
+          exit $status
+
+      # tauri 交叉打 NSIS 包时会去找 makensis.exe：Linux 的 Ubuntu 包把它装在
+      # /usr/bin/makensis（NSIS 3.x），这里补一个 .exe 名字的入口，省得去装别的东西。
+      - name: Provide makensis.exe
+        run: |
+          makensis_path=$(command -v makensis || true)
+          if [ -z "$makensis_path" ]; then
+            echo "::error title=makensis missing::apt 没装上 nsis，打不出安装包"
+            exit 1
+          fi
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$makensis_path" "$HOME/.local/bin/makensis.exe"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/makensis.exe" -VERSION
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          # 交叉打 Windows 安装包需要 Windows 目标。用 GNU 版：MSVC 版要靠 libcmt.lib 等导入库，
+          # 这些只在 Visual Studio 里（VCRedist、WindowsAppSDK 包里都没有），Linux 上凑不齐。
+          targets: x86_64-pc-windows-gnu
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -220,8 +287,116 @@ jobs:
       - name: Build .deb
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.1.0.${GITHUB_RUN_NUMBER}"
+          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.2.0.${GITHUB_RUN_NUMBER}"
           bash packaging/deb/build.sh "$VERSION" amd64 "$PWD/dist"
+      # Linux 上没有 Windows 的库，必须用 --no-bundle 先给出 target 目录，再只打 NSIS。
+      # 两步分开是为了在注解里直接看到是哪一步失败（job 日志要管理员权限才拉得到）。
+      # 用轻量 runner 上的 config-rs 试错期：pkg-config 报错、cargo tauri 不存在之类的问题
+      # 一律先打进注解（不中断），打不出安装包就当没有——apk / Linux / LÖVE 包照常发布。
+      # 之前这里只有探测、没有安装，`cargo tauri` 自然是 no such command。
+      # install-action 直接拿官方预编译二进制，不现场编译上百个依赖。
+      - name: Set up Tauri CLI
+        uses: taiki-e/install-action@v2
+        with:
+          tool: tauri-cli@2
+
+      - name: Probe Tauri toolchain
+        continue-on-error: true
+        run: |
+          which pkg-config; pkg-config --version
+          for m in openssl gtk+-3.0 libsoup-3.0 webkit2gtk-4.1; do
+            if pkg-config --exists "$m" 2>/dev/null; then
+              echo "$m = $(pkg-config --modversion "$m")"
+            else
+              echo "::warning title=pkg-config::missing $m"
+            fi
+          done
+          ( command -v cargo-tauri && cargo tauri --version ) || echo '::warning title=cargo-tauri::not installed'
+          exit 0
+      # tauri 自己会再跑一遍 cargo，而它默认把产物写到 target-tauri，和上面的
+      # `cargo build --release --bins`（rust-cache 缓存的就是 target/）完全不是一份，
+      # 等于整包重编一遍；这里显式指到同一目录复用缓存。
+      - name: Prepare Windows target
+        shell: bash
+        run: |
+          set -o pipefail
+          export CARGO_TARGET_DIR="$PWD/src-tauri/target"
+          cargo tauri build --target x86_64-pc-windows-gnu --no-bundle 2>&1 |
+            tee ../tauri-prep.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            tail -n 30 ../tauri-prep.log | while IFS= read -r line; do
+              echo "::warning title=tauri build::${line:0:600}"
+            done
+            exit "$status"
+          fi
+
+      - name: Build Windows installer
+        shell: bash
+        run: |
+          set -o pipefail
+          export CARGO_TARGET_DIR="$PWD/src-tauri/target"
+          export RUST_BACKTRACE=1
+          # 逐步排查交叉打包的 `No such file or directory (os error 2)`：
+          # 1) 不带 --ci 跑一遍（--ci 在 Linux 上会把 NSIS 输出的哈希警告变成上限 1 条的错误）
+          echo '=== attempt 1: without --ci ==='
+          run_bundle() {
+            cargo tauri bundle --bundles nsis "$@" --target x86_64-pc-windows-gnu 2>&1 |
+              tee ../tauri-nsis.log
+            return ${PIPESTATUS[0]}
+          }
+          if run_bundle; then
+            echo 'attempt 1 ok'
+          else
+            echo "attempt 1 failed: $?"
+            echo '=== staged bundle inputs ==='
+            find src-tauri/target/bundle -maxdepth 5 2>/dev/null | head -40 || true
+            echo '=== NSIS cache ==='
+            ls -laR "$HOME/.cache/tauri/NSIS" 2>&1 | head -60 || true
+            echo '=== bundle output dirs ==='
+            find src-tauri/target/x86_64-pc-windows-gnu/release/bundle -maxdepth 4 2>/dev/null | head -40 || true
+            echo '=== attempt 2: registry NSIS_PATH ==='
+            registr=$(find "$HOME/.cargo/registry/src" -maxdepth 2 -type d -name 'registry.nsis-*' 2>/dev/null | head -1)
+            echo "registry nsis: ${registr:-none}"
+            find "$HOME/.cargo/registry/src" -maxdepth 4 -type d -path '*registry.nsis*' -name '*x86-64*' 2>/dev/null | head -5 || true
+            if [ -n "$registr" ] && [ -d "$registr/nsis-3.13" ]; then
+              export NSIS_PATH="$registr/nsis-3.13"
+              echo "NSIS_PATH=$NSIS_PATH"
+              run_bundle && echo 'attempt 2 ok'
+            fi
+            echo '=== attempt 3: --ci again ==='
+            run_bundle --ci && echo 'attempt 3 ok'
+          fi
+          # 这里始终以 0 退出：三次尝试都失败时只把日志留下，由下一步 Decide 决定是否放弃安装包。
+          exit 0
+
+      - name: Upload bundle log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-log
+          path: tauri-nsis.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Collect Windows installer
+        run: |
+          mkdir -p dist
+          src=$(ls src-tauri/target/x86_64-pc-windows-gnu/release/bundle/nsis/*-setup.exe 2>/dev/null | head -1)
+          if [ -z "$src" ]; then
+            echo "::warning title=no installer::交叉打包没产出 setup.exe，见 windows-installer-log 产物"
+            exit 0
+          fi
+          cp "$src" "dist/bluetooth-input-bridge-${GITHUB_REF_NAME#v}-windows-x64-setup.exe"
+          ls -l dist
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows-installer
+          path: desktop/dist/*.exe
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Upload .deb
         uses: actions/upload-artifact@v4
@@ -251,7 +426,7 @@ jobs:
       - name: Build package
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.1.0.${GITHUB_RUN_NUMBER}"
+          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.2.0.${GITHUB_RUN_NUMBER}"
           workdir="$GITHUB_WORKSPACE/desktop/packaging/arch"
           sed -i "s/^pkgver=.*/pkgver=$VERSION/" "$workdir/PKGBUILD"
           useradd -m builder
@@ -266,11 +441,12 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # Windows 后端：Win32 蓝牙 RFCOMM（AF_BTH + WSASetService）+ SendInput 文字注入，
+  # 实现说明见 desktop/docs/windows.md；安装包由 tauri CLI 打成 NSIS。
   windows:
-    name: Windows (placeholder)
-    if: ${{ inputs.build_windows }}
+    name: Windows
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: desktop
@@ -286,23 +462,62 @@ jobs:
         with:
           workspaces: desktop/src-tauri -> target
 
-      - name: Build placeholder binaries
+      # 安装包（NSIS）改在 linux 的 Debian 作业里打，Windows 这里只负责编译与自检。
+      # install-action 没有 tauri-cli 的预编译包时会退回到 cargo-binstall，再退回到源码编译，
+      # 一次要十几分钟；直接下官方 release 的二进制，几秒钟的事。
+      - name: Set up Tauri CLI
+        uses: taiki-e/install-action@v2
+        with:
+          tool: tauri-cli@2
+
+      - name: Build binaries
         run: cargo build --locked --release --manifest-path src-tauri/Cargo.toml --bins
 
-      - name: Upload placeholder binaries
+      # 单独一步构建测试（等价于 cargo test --no-run），下面直接跑产出的可执行文件：
+      # cargo test 会把失败详情写进组日志，注解里看不到。
+      - name: Build unit tests
+        run: cargo test --locked --no-run --manifest-path src-tauri/Cargo.toml --lib
+
+      # 失败用例逐个输出成工作流注解：默认的 job 日志要管理员权限才拉得到，
+      # 而失败详情只出现在组日志里时，注解里就只剩一句 "exit code 1"。
+      # 顺带把休眠不唤醒的问题暴露出来——并行跑到一半卡死，只会看到超时。
+      - name: Run unit tests
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'unit-tests.log'
+          $exe = (Get-ChildItem -Recurse -Path 'src-tauri/target/debug/deps' -Filter '*.exe' |
+            Where-Object { $_.BaseName -like 'bluetooth_input_desktop_lib-*' -and $_.BaseName -ne 'bluetooth_input_desktop_lib' } |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1)
+          if (-not $exe) { throw '没有找到测试可执行文件（先跑 cargo test --no-run）' }
+          & $exe.FullName --test-threads=1 2>&1 | Tee-Object -FilePath $log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Get-Content $log |
+              Where-Object { $_ -match 'FAILED' -or $_ -match '^test result:' } |
+              Select-Object -First 20 |
+              ForEach-Object {
+                $text = $_.Trim()
+                if ($text.Length -gt 600) { $text = $text.Substring(0, 600) }
+                Write-Output "::error title=unit-tests failed::$text"
+              }
+          }
+          exit $code
+
+      # 测试日志单独上传：默认的 job 日志要管理员权限才拉得到，失败时至少有它可看。
+      - name: Upload unit test log
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-windows-placeholder
-          path: |
-            desktop/src-tauri/target/release/bluetooth-input-desktop.exe
-            desktop/src-tauri/target/release/bluetooth-input-bridge-service.exe
-          if-no-files-found: error
+          name: windows-unit-tests
+          path: ${{ runner.temp }}/unit-tests.log
+          if-no-files-found: ignore
           retention-days: 7
-
   release:
     name: Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [android, desktop, desktop-deb, desktop-arch, love]
+    # 永远跑：Windows 安装包那一步挂掉也不该把 apk、Linux 包、LÖVE 包一起扣下。
+    if: always() && startsWith(github.ref, 'refs/tags/v')
+    # 不列 desktop-deb：它的产物是 .deb 和 Windows 安装包，失败时不该挡住 apk / Linux / LÖVE 的发布。
+    needs: [android, desktop, desktop-arch, love, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -314,17 +529,32 @@ jobs:
 
       - name: Package
         run: |
+          # 每个产物单独取：某个作业没产出（例如 Windows 安装包没打出来）只少一个文件，
+          # 不该把 apk、deb、Arch 包、LÖVE 包一起扣下。
           mkdir -p dist
-          cp artifacts/android-apk/*.apk dist/
-          cp artifacts/desktop-deb/*.deb dist/
-          cp artifacts/desktop-arch/*.pkg.tar.zst dist/
-          cp artifacts/love-builds/*.love artifacts/love-builds/*.zip artifacts/love-builds/*.tar.gz dist/
-          cp artifacts/desktop-linux/bluetooth-input-desktop \
-             artifacts/desktop-linux/bluetooth-input-bridge-service dist/
-          chmod +x dist/bluetooth-input-desktop dist/bluetooth-input-bridge-service
+          copy() {
+            local pattern=$1
+            if compgen -G "$pattern" > /dev/null; then
+              cp $pattern dist/
+            else
+              echo "::warning title=missing artifact::没有找到 $pattern"
+            fi
+          }
+          copy 'artifacts/android-apk/*.apk'
+          copy 'artifacts/desktop-deb/*.deb'
+          copy 'artifacts/desktop-arch/*.pkg.tar.zst'
+          copy 'artifacts/love-builds/*.love'
+          copy 'artifacts/love-builds/*.zip'
+          copy 'artifacts/love-builds/*.tar.gz'
+          copy 'artifacts/desktop-linux/bluetooth-input-desktop'
+          copy 'artifacts/desktop-linux/bluetooth-input-bridge-service'
+          copy 'artifacts/desktop-windows-installer/*.exe'
+          chmod +x dist/bluetooth-input-desktop dist/bluetooth-input-bridge-service 2>/dev/null || true
           (cd dist && tar -czf bluetooth-input-bridge-linux-x86_64.tar.gz \
              bluetooth-input-desktop bluetooth-input-bridge-service)
-
+          (cd dist && find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\n' \
+             | sort | xargs -r sha256sum > SHA256SUMS.txt)
+          ls -l dist
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
@@ -335,4 +565,6 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
             dist/*.love
+            dist/*.exe
+            dist/SHA256SUMS.txt
           generate_release_notes: true

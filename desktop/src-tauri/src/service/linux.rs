@@ -69,7 +69,10 @@ impl WaylandEnv {
                 }
             }
         }
-        Self { display, runtime_dir }
+        Self {
+            display,
+            runtime_dir,
+        }
     }
 
     fn available(&self) -> bool {
@@ -354,7 +357,12 @@ async fn describe_device(inner: &Inner, device: &OwnedObjectPath) -> (String, Op
     (name, address)
 }
 
-fn serve_client(fd: OwnedFd, injector: GnomeInjector, inner: Arc<Inner>, id: u64) -> Result<(), String> {
+fn serve_client(
+    fd: OwnedFd,
+    injector: GnomeInjector,
+    inner: Arc<Inner>,
+    id: u64,
+) -> Result<(), String> {
     // BlueZ hands the accepted RFCOMM socket over with O_NONBLOCK set; the
     // worker reads blocking lines, so clear the flag first.
     let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFL) };
@@ -437,7 +445,12 @@ impl Inner {
         .map_err(|error| format!("BlueZ 不可用: {error}"))?;
         self.connection
             .object_server()
-            .at(PROFILE_PATH, Profile { inner: self.clone() })
+            .at(
+                PROFILE_PATH,
+                Profile {
+                    inner: self.clone(),
+                },
+            )
             .await
             .map_err(|error| format!("注册 Profile 对象失败: {error}"))?;
         let path = OwnedObjectPath::try_from(PROFILE_PATH).map_err(|error| error.to_string())?;
@@ -473,7 +486,8 @@ impl Inner {
             )
             .await
             .map_err(|error| format!("BlueZ 不可用: {error}"))?;
-            let path = OwnedObjectPath::try_from(PROFILE_PATH).map_err(|error| error.to_string())?;
+            let path =
+                OwnedObjectPath::try_from(PROFILE_PATH).map_err(|error| error.to_string())?;
             proxy
                 .call::<_, _, ()>("UnregisterProfile", &(path,))
                 .await
@@ -534,7 +548,18 @@ fn config_base() -> PathBuf {
 }
 
 fn config_path() -> PathBuf {
-    config_base().join("bluetooth-input-bridge").join("service.json")
+    config_base()
+        .join("bluetooth-input-bridge")
+        .join("service.json")
+}
+
+/// 服务日志路径（界面进程 spawn 服务时把 stdout/stderr 重定向到这里）。
+pub fn log_path() -> PathBuf {
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("bluetooth-input-bridge").join("service.log")
 }
 
 fn load_config(path: &Path) -> Config {
@@ -556,10 +581,7 @@ fn save_config(path: &Path, config: &Config) {
 }
 
 fn autostart_unit_path() -> PathBuf {
-    config_base()
-        .join("systemd")
-        .join("user")
-        .join(UNIT_NAME)
+    config_base().join("systemd").join("user").join(UNIT_NAME)
 }
 
 fn autostart_enabled() -> bool {
@@ -574,15 +596,16 @@ fn autostart_enabled() -> bool {
 
 fn apply_autostart(enabled: bool) -> Result<bool, String> {
     if enabled {
-        let executable = std::env::current_exe()
-            .map_err(|error| format!("无法定位服务程序: {error}"))?;
+        let executable =
+            std::env::current_exe().map_err(|error| format!("无法定位服务程序: {error}"))?;
         let unit = format!(
             "[Unit]\nDescription=Bluetooth Input Bridge headless service\nAfter=graphical-session.target\n\n[Service]\nType=simple\nExecStart={}\nRestart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=graphical-session.target\n",
             executable.display()
         );
         let path = autostart_unit_path();
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| format!("创建 systemd 目录失败: {error}"))?;
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("创建 systemd 目录失败: {error}"))?;
         }
         std::fs::write(&path, unit).map_err(|error| format!("写入自启单元失败: {error}"))?;
         run_systemctl(&["daemon-reload"])?;
@@ -613,7 +636,11 @@ fn run_systemctl(args: &[&str]) -> Result<(), String> {
         Err(format!(
             "systemctl {} 失败: {}",
             args.join(" "),
-            if message.is_empty() { "未知错误" } else { &message }
+            if message.is_empty() {
+                "未知错误"
+            } else {
+                &message
+            }
         ))
     }
 }
@@ -630,14 +657,20 @@ async fn dispatch(inner: Arc<Inner>, command: &str, request: &Json) -> Json {
     match command {
         "status" => reply_status(&inner),
         "setRegistration" => {
-            let enabled = request.get("enabled").and_then(Json::as_bool).unwrap_or(false);
+            let enabled = request
+                .get("enabled")
+                .and_then(Json::as_bool)
+                .unwrap_or(false);
             match inner.set_registration(enabled).await {
                 Ok(()) => reply_status(&inner),
                 Err(error) => reply_error(&inner, error),
             }
         }
         "setAutostart" => {
-            let enabled = request.get("enabled").and_then(Json::as_bool).unwrap_or(false);
+            let enabled = request
+                .get("enabled")
+                .and_then(Json::as_bool)
+                .unwrap_or(false);
             match tokio::task::spawn_blocking(move || apply_autostart(enabled)).await {
                 Ok(Ok(actual)) => {
                     inner.update(|status| status.autostart_enabled = actual);
@@ -701,7 +734,11 @@ async fn handle_connection(stream: UnixStream, inner: Arc<Inner>) {
     let request: Json = match serde_json::from_str(&line) {
         Ok(request) => request,
         Err(_) => {
-            let _ = write_json(&mut writer, &json!({ "ok": false, "error": "请求格式错误" })).await;
+            let _ = write_json(
+                &mut writer,
+                &json!({ "ok": false, "error": "请求格式错误" }),
+            )
+            .await;
             return;
         }
     };
@@ -711,7 +748,12 @@ async fn handle_connection(stream: UnixStream, inner: Arc<Inner>) {
         .unwrap_or_default()
         .to_string();
     if command == "subscribe" {
-        if !write_json(&mut writer, &json!({ "ok": true, "status": inner.snapshot() })).await {
+        if !write_json(
+            &mut writer,
+            &json!({ "ok": true, "status": inner.snapshot() }),
+        )
+        .await
+        {
             return;
         }
         let mut updates = inner.updates.subscribe();
@@ -740,8 +782,7 @@ async fn handle_connection(stream: UnixStream, inner: Arc<Inner>) {
 async fn bind_control_socket() -> Result<UnixListener, String> {
     let path = client::socket_path();
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| format!("创建控制目录失败: {error}"))?;
+        std::fs::create_dir_all(parent).map_err(|error| format!("创建控制目录失败: {error}"))?;
     }
     UnixListener::bind(&path).map_err(|error| format!("控制接口监听失败: {error}"))
 }
@@ -803,7 +844,10 @@ pub async fn start() -> Result<(), String> {
         env,
     });
     let listener = bind_control_socket().await?;
-    eprintln!("bridge-service: control socket {}", client::socket_path().display());
+    eprintln!(
+        "bridge-service: control socket {}",
+        client::socket_path().display()
+    );
     tokio::spawn(serve_control(listener, inner.clone()));
     if config.registration_enabled {
         if let Err(error) = inner.register_profile().await {

@@ -1,22 +1,30 @@
 //! Tauri desktop shell for the Bluetooth Input Bridge.
 //!
-//! The RFCOMM/Bluetooth work lives in the headless `bluetooth-input-bridge-service`
-//! binary (see `src/bin/bridge-service.rs`). This shell only talks to it over the
-//! local control socket described in `service/client.rs`; the frontend can be
-//! swapped for another stack without touching the service.
+//! 蓝牙（RFCOMM/SDP）与文字注入都在后台服务里：
+//!
+//! - Linux：独立进程 `bluetooth-input-bridge-service`，界面通过 Unix socket 读写状态
+//!   （`service::client`）；
+//! - Windows：同一套 `ServiceStatus`/命令语义，但服务跑在界面进程内（命名管道也可单独
+//!   连，见 `service::win`），注入用 `SendInput` 而不是剪贴板。
+//!
+//! 界面（`web/`）只依赖 `ServiceStatus` 的字段名和 `get_status` /
+//! `set_registration` / `set_autostart` / `enable_pairing` / `send_test` 这些命令，
+//! 换后端不需要改前端。
 
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "linux")]
 use std::path::PathBuf;
+#[cfg(target_os = "linux")]
 use std::time::{Duration, Instant};
 use tauri::Emitter;
 
-mod protocol;
-#[cfg(target_os = "linux")]
+pub mod protocol;
 pub mod service;
-#[cfg(target_os = "windows")]
-mod windows;
 
+#[cfg(target_os = "linux")]
 pub const INJECTION_METHOD: &str = "wl-copy + uinput Ctrl+V";
+#[cfg(target_os = "windows")]
+pub const INJECTION_METHOD: &str = service::win::injection::INJECTION_METHOD;
 
 /// Status shared by the service and the UI. Serialized as camelCase for the
 /// frontend, which also means the control socket uses the same shape.
@@ -45,11 +53,7 @@ impl Default for ServiceStatus {
             connected_address: None,
             received_count: 0,
             last_error: None,
-            injection_method: if cfg!(target_os = "linux") {
-                INJECTION_METHOD.into()
-            } else {
-                "尚未实现".into()
-            },
+            injection_method: INJECTION_METHOD.into(),
         }
     }
 }
@@ -81,6 +85,56 @@ fn get_locale() -> &'static str {
     ui_locale(sys_locale::get_locale().as_deref())
 }
 
+/// Platform the UI is running on. The frontend has no reliable way to know this
+/// (the webview User-Agent is the same engine on every OS), and several labels —
+/// the platform badge, where the Bluetooth service is registered, which system
+/// settings page holds the pairing switch — differ per OS. Snowmen here rather
+/// than in JS so the frontend never has to guess.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlatformInfo {
+    /// `"windows"`, `"linux"` or `"unsupported"`.
+    os: &'static str,
+    /// Human-readable label for the badge in the title bar, e.g. `Windows 10/11`.
+    label: &'static str,
+    /// i18n key of the note under the 服务注册 switch: where the RFCOMM service
+    /// is published (BlueZ / the Windows Bluetooth SDP store).
+    registration_note_key: &'static str,
+    /// i18n key of the pairing hint: which system UI to open when pairing fails.
+    pairing_hint_key: &'static str,
+}
+
+#[tauri::command]
+fn get_platform() -> PlatformInfo {
+    #[cfg(target_os = "windows")]
+    {
+        PlatformInfo {
+            os: "windows",
+            label: "Windows 10/11",
+            registration_note_key: "registrationNoteOnWindows",
+            pairing_hint_key: "pairingHintWindows",
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        PlatformInfo {
+            os: "linux",
+            label: "GNOME · Wayland",
+            registration_note_key: "registrationNoteOnLinux",
+            pairing_hint_key: "pairingHintLinux",
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        PlatformInfo {
+            os: "unsupported",
+            label: "Unsupported",
+            registration_note_key: "registrationNoteOnLinux",
+            pairing_hint_key: "pairingHintLinux",
+        }
+    }
+}
+
 #[tauri::command]
 async fn get_status() -> ServiceStatus {
     #[cfg(target_os = "linux")]
@@ -90,7 +144,14 @@ async fn get_status() -> ServiceStatus {
             Err(error) => offline_status(error),
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    {
+        match service::win::client::status().await {
+            Ok(status) => status,
+            Err(error) => offline_status(format!("后台服务未运行: {error}")),
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         offline_status("当前平台尚未实现蓝牙服务".into())
     }
@@ -102,10 +163,14 @@ async fn set_registration(enabled: bool) -> Result<ServiceStatus, String> {
     {
         service::client::set_registration(enabled).await
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    {
+        service::win::client::set_registration(enabled).await
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         let _ = enabled;
-        Err("仅 Linux 后端支持服务注册开关".into())
+        Err("当前平台尚未实现服务注册开关".into())
     }
 }
 
@@ -115,10 +180,14 @@ async fn set_autostart(enabled: bool) -> Result<ServiceStatus, String> {
     {
         service::client::set_autostart(enabled).await
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    {
+        service::win::client::set_autostart(enabled).await
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         let _ = enabled;
-        Err("仅 Linux 后端支持开机自启".into())
+        Err("当前平台尚未实现开机自启".into())
     }
 }
 
@@ -128,9 +197,13 @@ async fn enable_pairing() -> Result<(), String> {
     {
         service::client::enable_pairing().await
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
     {
-        Err("仅 Linux 后端支持配对".into())
+        service::win::client::enable_pairing().await
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        Err("当前平台尚未实现配对".into())
     }
 }
 
@@ -140,12 +213,28 @@ async fn send_test(text: String) -> Result<(), String> {
     {
         service::client::send_test(&text).await
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    {
+        service::win::client::send_test(&text).await
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         let _ = text;
-        Err("仅 Linux 后端支持测试输入".into())
+        Err("当前平台尚未实现测试输入".into())
     }
 }
+
+/// 把状态推给 webview（Windows 后端的 `windows::run` 也会调用）。
+#[cfg(target_os = "windows")]
+pub(crate) fn emit_status(status: ServiceStatus) -> tauri::Result<()> {
+    let Some(handle) = CURRENT_APP.get() else {
+        return Ok(());
+    };
+    handle.emit("bridge-status", &status)
+}
+
+#[cfg(target_os = "windows")]
+static CURRENT_APP: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
 
 /// Keeps the webview fed with status events. Reconnects to the control socket
 /// and starts the headless service when it is not running yet.
@@ -163,17 +252,19 @@ async fn forward_status(app: tauri::AppHandle) {
                         Ok(0) | Err(_) => break,
                         Ok(_) => {
                             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
-                                if let Some(status) = value
-                                    .get("event")
-                                    .and_then(|event| serde_json::from_value::<ServiceStatus>(event.clone()).ok())
-                                {
+                                if let Some(status) = value.get("event").and_then(|event| {
+                                    serde_json::from_value::<ServiceStatus>(event.clone()).ok()
+                                }) {
                                     let _ = app.emit("bridge-status", &status);
                                 }
                             }
                         }
                     }
                 }
-                let _ = app.emit("bridge-status", offline_status("服务已断开，正在重连…".into()));
+                let _ = app.emit(
+                    "bridge-status",
+                    offline_status("服务已断开，正在重连…".into()),
+                );
             }
             Err(error) => {
                 if last_spawn.map_or(true, |moment| moment.elapsed() > Duration::from_secs(5)) {
@@ -201,10 +292,9 @@ fn service_binary() -> Option<PathBuf> {
 
 #[cfg(target_os = "linux")]
 fn spawn_service() -> Result<(), String> {
-    let binary = service_binary().ok_or_else(|| {
-        "找不到 bluetooth-input-bridge-service，请先运行 cargo build".to_string()
-    })?;
-    let log_path = log_path();
+    let binary = service_binary()
+        .ok_or_else(|| "找不到 bluetooth-input-bridge-service，请先运行 cargo build".to_string())?;
+    let log_path = service::linux::log_path();
     if let Some(parent) = log_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -225,19 +315,11 @@ fn spawn_service() -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
-fn log_path() -> PathBuf {
-    let base = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
-        .unwrap_or_else(std::env::temp_dir);
-    base.join("bluetooth-input-bridge").join("service.log")
-}
-
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_locale,
+            get_platform,
             get_status,
             set_registration,
             set_autostart,
@@ -254,9 +336,9 @@ pub fn run() {
             }
             #[cfg(target_os = "windows")]
             {
-                let _ = app.handle();
+                let _ = CURRENT_APP.set(app.handle().clone());
                 tauri::async_runtime::spawn(async move {
-                    if let Err(error) = windows::run().await {
+                    if let Err(error) = service::win::run().await {
                         eprintln!("bridge: {error}");
                     }
                 });
@@ -282,5 +364,15 @@ mod locale_tests {
         assert_eq!(ui_locale(Some("de_DE.UTF-8")), "en");
         assert_eq!(ui_locale(Some("C")), "en");
         assert_eq!(ui_locale(None), "en");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn injection_method_is_not_clipboard_based_on_windows() {
+        assert!(!super::INJECTION_METHOD.contains("剪贴板"));
+        assert_eq!(
+            super::ServiceStatus::default().injection_method,
+            "SendInput + KEYEVENTF_UNICODE"
+        );
     }
 }

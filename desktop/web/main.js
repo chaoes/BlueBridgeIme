@@ -1,6 +1,11 @@
 const tauri = window.__TAURI__;
 const byId = id => document.getElementById(id);
 
+// 后端（src/lib.rs）的 get_platform 决定：平台标签、服务注册到哪个蓝牙守护进程、
+// 配对失败时去哪个系统设置里手动开。前端不能靠 User-Agent 猜——各平台 webview 都是
+// 同一个 Chromium 内核，猜不准。
+let platform = { os: 'unsupported', label: '', registrationNoteKey: 'registrationNoteOnLinux', pairingHintKey: 'pairingHintLinux' };
+
 const I18N = {
   zh: {
     appTitle: '蓝牙输入桥 · PC',
@@ -21,20 +26,25 @@ const I18N = {
     hintRegistrationOff: '打开「服务注册」后，手机才能发现本机。',
     registrationTitle: '服务注册',
     registrationNoteOn: '向 BlueZ 发布 RFCOMM 服务',
+    registrationNoteOnLinux: '向 BlueZ 发布 RFCOMM 服务',
+    registrationNoteOnWindows: '登记到 Windows 蓝牙服务的 SDP 记录',
     registrationNoteOff: '服务已关闭，不再接受新连接',
     autostartTitle: '开机自启',
     autostartNote: '登录后自动运行无界面服务',
     guideTitle: '软件指引与介绍',
-    guideIntro: '手机与这台电脑配对后，「蓝牙输入桥」会把手机输入的内容经蓝牙送到电脑，再粘贴到当前焦点。',
+    guideIntro: '手机与这台电脑配对后，「蓝牙输入桥」会把手机输入的内容经蓝牙送到电脑，再输入到当前焦点。',
+    guideIntroWindows: '手机与这台电脑配对后，「蓝牙输入桥」会把手机输入的内容经蓝牙送到电脑，再用模拟按键输入到当前焦点；不走剪贴板，覆盖当前选中内容。',
     guideStep1: '在手机上打开应用，连接本机。',
     guideStep2: '把电脑的光标放进要输入的位置。',
-    guideStep3: '在手机上打字，电脑端自动粘贴。',
+    guideStep3: '在手机上打字，电脑端自动输入。',
     pairingButton: '允许配对 3 分钟',
     pairingHint: '首次配对时使用；若系统拒绝，可在 GNOME 蓝牙设置中开启。',
+    pairingHintLinux: '首次配对时使用；若系统拒绝，可在 GNOME 蓝牙设置中开启。',
+    pairingHintWindows: '首次配对时使用；若系统拒绝，可在 Windows「设置 → 蓝牙和其他设备」中添加设备。',
     pairingOk: '已开启，3 分钟后自动关闭。请立即在安卓端搜索本机。',
     pairingFailed: '开启失败：',
     testTitle: '测试输入框',
-    testIntro: '用来试打字，确认键盘和输入法正常。内容只留在本窗口，不会发送，也不会粘贴到别处。',
+    testIntro: '用来试打字，确认键盘和输入法正常。内容只留在本窗口，不会发送，也不会输入到别处。',
     testPlaceholder: '在这里试打字…',
     footerMethod: '输入方式',
     footerPrivacy: '不保存收到的文本 · 服务与界面分离',
@@ -60,20 +70,25 @@ const I18N = {
     hintRegistrationOff: 'Turn on Service registration so the phone can discover this PC.',
     registrationTitle: 'Service registration',
     registrationNoteOn: 'RFCOMM service published to BlueZ',
+    registrationNoteOnLinux: 'RFCOMM service published to BlueZ',
+    registrationNoteOnWindows: 'SDP record published to the Windows Bluetooth service',
     registrationNoteOff: 'Service off; new connections are refused',
     autostartTitle: 'Start at login',
     autostartNote: 'Runs the headless service after you log in',
     guideTitle: 'Guide and overview',
-    guideIntro: 'After pairing your phone with this PC, Bluetooth Input Bridge sends what you type over Bluetooth and pastes it into the focused input.',
+    guideIntro: 'After pairing your phone with this PC, Bluetooth Input Bridge sends what you type over Bluetooth and types it into the focused input.',
+    guideIntroWindows: 'After pairing your phone with this PC, Bluetooth Input Bridge sends what you type over Bluetooth and types it into the focused input with simulated keystrokes; it never uses the clipboard and replaces the current selection.',
     guideStep1: 'Open the app on your phone and connect to this PC.',
     guideStep2: 'Put the PC cursor where you want to type.',
-    guideStep3: 'Type on the phone; the PC pastes automatically.',
+    guideStep3: 'Type on the phone; the PC types it automatically.',
     pairingButton: 'Allow pairing for 3 minutes',
     pairingHint: 'Use this for the first pairing. If the system refuses, enable it in GNOME Bluetooth settings.',
+    pairingHintLinux: 'Use this for the first pairing. If the system refuses, enable it in GNOME Bluetooth settings.',
+    pairingHintWindows: 'Use this for the first pairing. If the system refuses, add the device in Windows Settings → Bluetooth & devices.',
     pairingOk: 'Enabled; it turns off after 3 minutes. Search for this PC on Android now.',
     pairingFailed: 'Could not enable: ',
     testTitle: 'Test input',
-    testIntro: 'Try typing here to check the keyboard and IME. Text stays in this window; it is not sent or pasted anywhere.',
+    testIntro: 'Try typing here to check the keyboard and IME. Text stays in this window; it is not sent or typed anywhere.',
     testPlaceholder: 'Try typing here…',
     footerMethod: 'Input method',
     footerPrivacy: 'Received text is not stored · Service and UI are separate',
@@ -99,16 +114,21 @@ const I18N = {
     hintRegistrationOff: 'Включите «Регистрация сервиса», чтобы телефон видел этот ПК.',
     registrationTitle: 'Регистрация сервиса',
     registrationNoteOn: 'Сервис RFCOMM опубликован в BlueZ',
+    registrationNoteOnLinux: 'Сервис RFCOMM опубликован в BlueZ',
+    registrationNoteOnWindows: 'Запись SDP зарегистрирована в службе Bluetooth Windows',
     registrationNoteOff: 'Сервис выключен; новые подключения отклоняются',
     autostartTitle: 'Автозапуск',
     autostartNote: 'Запускать фоновый сервис после входа',
     guideTitle: 'Руководство и описание',
-    guideIntro: 'После сопряжения телефона с этим ПК «Мост ввода Bluetooth» передаёт введённое по Bluetooth и вставляет в активное поле.',
+    guideIntro: 'После сопряжения телефона с этим ПК «Мост ввода Bluetooth» передаёт введённое по Bluetooth и вводит в активное поле.',
+    guideIntroWindows: 'После сопряжения телефона с этим ПК «Мост ввода Bluetooth» передаёт введённое по Bluetooth и вводит в активное поле имитацией клавиш; буфер обмена не используется, текущее выделение заменяется.',
     guideStep1: 'Откройте приложение на телефоне и подключитесь к этому ПК.',
     guideStep2: 'Поставьте курсор ПК туда, где нужно печатать.',
-    guideStep3: 'Печатайте на телефоне — ПК вставит текст автоматически.',
+    guideStep3: 'Печатайте на телефоне — ПК введёт текст автоматически.',
     pairingButton: 'Разрешить сопряжение на 3 минуты',
     pairingHint: 'Для первого сопряжения. Если система откажет, включите в настройках Bluetooth GNOME.',
+    pairingHintLinux: 'Для первого сопряжения. Если система откажет, включите в настройках Bluetooth GNOME.',
+    pairingHintWindows: 'Для первого сопряжения. Если система откажет, добавьте устройство в «Параметры → Bluetooth и устройства» Windows.',
     pairingOk: 'Включено; выключится через 3 минуты. Найдите этот ПК на Android.',
     pairingFailed: 'Не удалось включить: ',
     testTitle: 'Тестовое поле',
@@ -138,16 +158,21 @@ const I18N = {
     hintRegistrationOff: '「サービス登録」をオンにすると、スマホから本機を検出できます。',
     registrationTitle: 'サービス登録',
     registrationNoteOn: 'RFCOMMサービスをBlueZに公開済み',
+    registrationNoteOnLinux: 'RFCOMMサービスをBlueZに公開済み',
+    registrationNoteOnWindows: 'Windows BluetoothサービスのSDPレコードに登録済み',
     registrationNoteOff: 'サービス停止中。新しい接続は拒否されます',
     autostartTitle: 'ログイン時に起動',
     autostartNote: 'ログイン後にヘッドレスサービスを自動起動',
     guideTitle: '使い方と概要',
-    guideIntro: 'スマホとこのPCをペアリングすると、入力内容がBluetoothでPCに送られ、フォーカス中の欄に貼り付けられます。',
+    guideIntro: 'スマホとこのPCをペアリングすると、入力内容がBluetoothでPCに送られ、フォーカス中の欄に入力されます。',
+    guideIntroWindows: 'スマホとこのPCをペアリングすると、入力内容がBluetoothでPCに送られ、フォーカス中の欄にキー入力をエミュレートして入力されます。クリップボードは使わず、選択中の範囲は置き換わります。',
     guideStep1: 'スマホでアプリを開き、本機に接続します。',
     guideStep2: 'PCのカーソルを入力したい位置に置きます。',
-    guideStep3: 'スマホで入力すると、PC側に自動で貼り付きます。',
+    guideStep3: 'スマホで入力すると、PC側に自動で入力されます。',
     pairingButton: '3分間ペアリングを許可',
     pairingHint: '初回のペアリング用です。システムに拒否された場合はGNOMEのBluetooth設定で有効にしてください。',
+    pairingHintLinux: '初回のペアリング用です。システムに拒否された場合はGNOMEのBluetooth設定で有効にしてください。',
+    pairingHintWindows: '初回のペアリング用です。システムに拒否された場合はWindowsの「設定 → Bluetooth とデバイス」から追加してください。',
     pairingOk: '有効にしました。3分後に自動で解除されます。今すぐAndroidから本機を検索してください。',
     pairingFailed: '有効にできませんでした：',
     testTitle: 'テスト入力欄',
@@ -177,16 +202,21 @@ const I18N = {
     hintRegistrationOff: '「서비스 등록」을 켜야 휴대폰이 이 PC를 찾을 수 있습니다.',
     registrationTitle: '서비스 등록',
     registrationNoteOn: 'RFCOMM 서비스를 BlueZ에 게시함',
+    registrationNoteOnLinux: 'RFCOMM 서비스를 BlueZ에 게시함',
+    registrationNoteOnWindows: 'Windows Bluetooth 서비스의 SDP 레코드에 등록됨',
     registrationNoteOff: '서비스 꺼짐. 새 연결이 거부됩니다',
     autostartTitle: '로그인 시 시작',
     autostartNote: '로그인 후 헤드리스 서비스를 자동 실행',
     guideTitle: '사용 안내',
-    guideIntro: '휴대폰과 이 PC를 페어링하면 입력한 내용이 블루투스로 전송되어 현재 커서 위치에 붙여넣어집니다.',
+    guideIntro: '휴대폰과 이 PC를 페어링하면 입력한 내용이 블루투스로 전송되어 현재 커서 위치에 입력됩니다.',
+    guideIntroWindows: '휴대폰과 이 PC를 페어링하면 입력한 내용이 블루투스로 전송되어 현재 커서 위치에 키 입력을 모방해 입력됩니다. 클립보드는 쓰지 않으며 선택된 범위는 대체됩니다.',
     guideStep1: '휴대폰에서 앱을 열고 이 PC에 연결하세요.',
     guideStep2: 'PC 커서를 입력할 위치에 두세요.',
-    guideStep3: '휴대폰으로 입력하면 PC에 자동으로 붙여넣어집니다.',
+    guideStep3: '휴대폰으로 입력하면 PC에 자동으로 입력됩니다.',
     pairingButton: '3분 동안 페어링 허용',
     pairingHint: '처음 페어링할 때 사용하세요. 시스템이 거부하면 GNOME 블루투스 설정에서 켜세요.',
+    pairingHintLinux: '처음 페어링할 때 사용하세요. 시스템이 거부하면 GNOME 블루투스 설정에서 켜세요.',
+    pairingHintWindows: '처음 페어링할 때 사용하세요. 시스템이 거부하면 Windows「설정 → Bluetooth 및 장치」에서 추가하세요.',
     pairingOk: '켜졌습니다. 3분 후 자동으로 꺼집니다. 지금 Android에서 이 PC를 검색하세요.',
     pairingFailed: '켜지 못했습니다: ',
     testTitle: '테스트 입력란',
@@ -214,6 +244,33 @@ function applyStatic() {
     const text = t[node.dataset.i18nPlaceholder];
     if (text) node.placeholder = text;
   });
+  applyPlatform();
+}
+
+// 平台相关的文案：标题栏徽标、服务注册去向、配对失败时的提示，以及 Windows 上
+// “不是粘贴而是模拟按键”这类差异。标签与文案键都来自后端，这里只做查表。
+function applyPlatform() {
+  const badge = byId('platform');
+  if (badge) {
+    badge.textContent = platform.label || '';
+    badge.hidden = !platform.label;
+    badge.title = platform.os === 'unsupported' ? '当前平台尚未实现蓝牙后端' : '';
+  }
+  const note = byId('registration-note');
+  if (note) {
+    const key = platform.registrationNoteKey;
+    note.dataset.i18n = key;
+    if (t[key]) note.textContent = t[key];
+  }
+  const hint = byId('pairing-result');
+  if (hint) hint.dataset.i18n = platform.pairingHintKey;
+  const intro = document.querySelector('[data-i18n="guideIntro"]');
+  if (intro) {
+    // Windows 上后端用 SendInput 模拟按键而不是剪贴板，指引里要讲清楚。
+    const key = platform.os === 'windows' ? 'guideIntroWindows' : 'guideIntro';
+    intro.dataset.i18n = key;
+    if (t[key]) intro.textContent = t[key];
+  }
 }
 
 function render(status) {
@@ -299,13 +356,17 @@ async function boot() {
     return;
   }
   try {
-    const detected = await invoke('get_locale');
-    if (I18N[detected]) {
-      lang = detected;
-      t = I18N[detected];
+    const [detectedLocale, detectedPlatform] = await Promise.all([
+      invoke('get_locale'),
+      invoke('get_platform'),
+    ]);
+    if (I18N[detectedLocale]) {
+      lang = detectedLocale;
+      t = I18N[detectedLocale];
     }
+    if (detectedPlatform && detectedPlatform.os) platform = detectedPlatform;
   } catch (error) {
-    console.warn('locale detection failed', error);
+    console.warn('locale/platform detection failed', error);
   }
   applyStatic();
 
