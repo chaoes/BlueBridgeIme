@@ -295,13 +295,21 @@ jobs:
           done
           ( command -v cargo-tauri && cargo tauri --version ) || echo '::warning title=cargo-tauri::not installed'
           exit 0
-      # tauri 自己会再跑一遍 cargo；这里显式指定 target 目录，让它和上面的
-      # `cargo build --release --bins` 用同一份产物（走 rust-cache 的同一路径）。
+      # tauri 自己会再跑一遍 cargo，而它默认把产物写到 target-tauri，和上面的
+      # `cargo build --release --bins`（rust-cache 缓存的就是 target/）完全不是一份，
+      # 等于整包重编一遍；这里显式指到同一目录复用缓存。
+      #
+      # 交叉编译这两个环境变量缺一不可（runner 上没有 llvm-rc，tauri-winres 会 panic）：
+      # CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld 用来链接，
+      # __CARGO_TEST_LLVM_LIB\(=\)true 让 cc-rs 找到 llvm-lib / llvm-rc。
       - name: Prepare Windows target
         shell: bash
         run: |
           set -o pipefail
-          cargo tauri build --target x86_64-pc-windows-msvc --no-bundle --verbose 2>&1 |
+          export CARGO_TARGET_DIR="$PWD/src-tauri/target"
+          export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld
+          export __CARGO_TEST_LLVM_LIB\(=\)true
+          cargo tauri build --target x86_64-pc-windows-msvc --no-bundle 2>&1 |
             tee ../tauri-prep.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
@@ -315,6 +323,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          export CARGO_TARGET_DIR="$PWD/src-tauri/target"
           cargo tauri bundle --bundles nsis --ci --target x86_64-pc-windows-msvc 2>&1 |
             tee ../tauri-nsis.log
           status=${PIPESTATUS[0]}
