@@ -167,7 +167,9 @@ jobs:
       # Windows 包要带上服务与 socket 桥（artifact 由 windows 作业上传）。
       # 放在这里而不是 needs 里：Windows 作业跑挂了也不该拖住其余平台的发布，
       # 拿不到就跳过，只是少一个 zip。
-      - name: Download Windows binaries
+      # 不能先下载再等：download-artifact 在产物还没上传时直接失败，之后也不会重试，
+      # 所以轮询这同一个步骤，每次失败都吞掉，直到两个 exe 都拿到（最多 20 分钟）。
+      - name: Wait for Windows binaries
         id: win
         if: always()
         continue-on-error: true
@@ -175,19 +177,26 @@ jobs:
         with:
           name: desktop-windows
           path: love/dist/win
+          run-id: ${{ github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          merge-multiple: false
 
-      - name: Wait for Windows binaries
+      # download-artifact@v4 在产物还没上传时直接失败，之后不再重试，所以再单独轮询一次，
+      # 每次失败都吞掉，直到两个 exe 都拿到（最多 20 分钟）。
+      - name: Retry Windows binaries
+        if: always()
         shell: bash
         run: |
-          # 下载是异步的：等 Windows 作业结束（最多 30 分钟）再打包，免得抢跑拿到半个目录。
           dir=dist/win
-          for i in $(seq 1 180); do
+          for i in $(seq 1 40); do
             if [ -f "$dir/bluetooth-input-bridge-service.exe" ] && [ -f "$dir/bluetooth-input-bridge-socket.exe" ]; then
+              echo "拿到 Windows 二进制"
               exit 0
             fi
             sleep 10
+            ( cd "$GITHUB_WORKSPACE/love" && gh run download "$GITHUB_RUN_ID" -n desktop-windows -D dist/win ) || true
           done
-          echo "提示：30 分钟内没等到 Windows 二进制，只出其余平台的包"
+          echo "提示：没等到 Windows 二进制，只出其余平台的包"
           exit 0
 
       - name: Package LÖVE builds
@@ -370,6 +379,16 @@ jobs:
           }
           exit $code
 
+      # 测试日志单独上传：默认的 job 日志要管理员权限才拉得到，失败时至少有它可看。
+      - name: Upload unit test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-unit-tests
+          path: ${{ runner.temp }}/unit-tests.log
+          if-no-files-found: ignore
+          retention-days: 7
+
       # NSIS 不在 runner 的默认镜像里，而 tauri-cli 找不到 makensis 时会去 GitHub 下载
       # 一个自带工具链（需要出网）。放在编译与测试之后，是因为它们占了大头时间：
       # 宁可在省下缓存与测试之后装 NSIS 失败，也不要把前面几步一起拖进“跳过”。
@@ -402,8 +421,12 @@ jobs:
         id: bundle
         run: |
           rm -rf ../tauri-nsis.log
-          set -o pipefail
+          set -x
           cargo tauri bundle --bundles nsis --ci 2>&1 | tee ../tauri-nsis.log
+          status=${PIPESTATUS[0]}
+          set +x
+          echo "cargo tauri bundle 退出码：$status"
+          exit $status
 
       - name: Verify installer output
         if: always()
