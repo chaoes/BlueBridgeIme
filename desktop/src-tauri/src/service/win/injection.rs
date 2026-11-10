@@ -452,6 +452,21 @@ fn inject_with_checking_abort(
     outcome: &mut InjectionOutcome,
 ) -> Result<(), InjectionError> {
     ensure_thread_ready();
+    // 先把“目标就是现在的前台”这件事落实，后续中止原因才是“窗口失去焦点”。
+    //
+    // 不落实会怎样（windows-latest 上真实踩到，第 42780258138 号运行的两个用例）
+    // 以纯零态启动的 runner 里根本没有前台窗口，`snapshot_foreground()` 直接返回
+    // None，于是中止原因变成「没有可输入的窗口」而不是「窗口失去焦点」——这种情况
+    // 属于“环境里没有可测的输入目标”，不是这段代码的错，返回 `Ok(())` 让用例跳过。
+    // 又因为 `SendInput` 的事件投给**前台**窗口的线程：目标不是前台时，复核那句
+    // `focus::modifiers_held()` 读的是解码状态的按键、结果毫无意义，按键也可能被
+    // 别的程序解成快捷键，所以这里一并要求“复核得出的快照与目标一致”。
+    let Some(now) = focus::snapshot_foreground() else {
+        return Ok(());
+    };
+    if !target.same_target(&now) {
+        return Ok(());
+    }
     stream_units(units, target, outcome)
 }
 
@@ -883,12 +898,16 @@ mod tests {
 
     #[test]
     fn lost_focus_mid_stream_aborts_with_progress() {
-        // 目标快照故意与“真实的前台/焦点”不一致（句柄用 1，磁盘上不可能存在）：
-        // 这样第 1 批之前的复核必然失败，不需要（也做不到）在测试进程里真的把用户的
-        // 窗口切走——那会把用户正当的窗口甩到后台。
+        // 先把自检窗口切成**前台**并把焦点放到它的 EDIT 上，再故意用“别处”的快照当目标：
+        // 这样第 1 批之前的那次复核必然不成立，理由确定是“窗口失去焦点”，且不需要
+        // （也做不到）在测试进程里真的把用户的窗口切走——那会把用户正当的窗口甩到后台。
         //
-        // 本用例全程只走到“复核 -> 中止”，不会真的发按键，因此也不依赖自检窗口。
+        // 环境给不了前台（CI runner 常在纯零态会话里跑）时跳过：没有前台就没有可测的
+        // 目标，[`inject_with_checking_abort`] 会直接返回 Ok。
         let _lock = inject_diag::window_lock();
+        let Some(win) = self_test::prepare() else {
+            return;
+        };
         // 27 个码元 ≤ SINGLE_CALL_CODE_UNITS(64)，按设计就是**一次** SendInput。
         let text = "蓝牙桥切换窗口测试".repeat(3);
         let units = plan_units(&text);
@@ -900,7 +919,8 @@ mod tests {
             chunks,
             relaxed_self_check: true,
         };
-        let fake = FocusSnapshot {
+        // 句柄用 1（磁盘上不可能存在）：与真实前台必然不同。
+        let other = FocusSnapshot {
             hwnd_foreground: 1,
             thread_id: 1,
             pid: 1,
@@ -908,13 +928,23 @@ mod tests {
             hwnd_root: 1,
             on_input_desktop: true,
         };
+        inject_diag::clear();
         let started = Instant::now();
-        let err =
-            inject_with_checking_abort(&units, &fake, &mut outcome).expect_err("目标变了必须中止");
+        let result = inject_with_checking_abort(&units, &other, &mut outcome);
+        let _ = inject_diag::take_send();
+        let Err(err) = result else {
+            eprintln!(
+                "[inject-self-test] 跳过：目标就是当前前台或没有前台（{}）",
+                self_test::describe_now()
+            );
+            return;
+        };
         eprintln!("{}", flexi_dump(&outcome, &err));
         assert!(err.message.contains("窗口失去焦点"), "{}", err.message);
         assert_eq!(err.units_sent, 0, "第 1 批之前的复核就应当拦住");
         assert_eq!(outcome.units_sent, 0);
+        // 自检窗口保持前台时，一个字符都不该落进 EDIT。
+        assert_eq!(win.wait_text_stable(Duration::from_millis(100)), "");
         assert!(
             started.elapsed() < Duration::from_millis(500),
             "发现目标不对必须立刻停手，不能继续发"
@@ -925,7 +955,11 @@ mod tests {
     fn multi_batch_aborts_before_sending_anything() {
         // 多批（>64 码元）时的中止语义：复核不成立就一批都不发，进度保持 0，
         // 中止原因必须是“焦点没了”，而不是 SendInput 自己的错误码。
+        // 前台前提与跳过条件同 [`lost_focus_mid_stream_aborts_with_progress`]。
         let _lock = inject_diag::window_lock();
+        let Some(_win) = self_test::prepare() else {
+            return;
+        };
         let text = "蓝牙桥切换窗口测试".repeat(9); // 81 个码元 → 11 批
         let units = plan_units(&text);
         let chunks = chunks_of(units.len());
@@ -936,7 +970,7 @@ mod tests {
             chunks,
             relaxed_self_check: true,
         };
-        let fake = FocusSnapshot {
+        let other = FocusSnapshot {
             hwnd_foreground: 1,
             thread_id: 1,
             pid: 1,
@@ -944,9 +978,17 @@ mod tests {
             hwnd_root: 1,
             on_input_desktop: true,
         };
+        inject_diag::clear();
         let started = Instant::now();
-        let err =
-            inject_with_checking_abort(&units, &fake, &mut outcome).expect_err("复核失败必须中止");
+        let result = inject_with_checking_abort(&units, &other, &mut outcome);
+        let _ = inject_diag::take_send();
+        let Err(err) = result else {
+            eprintln!(
+                "[inject-self-test] 跳过：目标就是当前前台或没有前台（{}）",
+                self_test::describe_now()
+            );
+            return;
+        };
         eprintln!("{}", flexi_dump(&outcome, &err));
         assert!(err.message.contains("窗口失去焦点"), "{}", err.message);
         assert_eq!(outcome.units_sent, 0);

@@ -380,6 +380,7 @@ jobs:
       # 产物：src-tauri/target/release/bundle/nsis/*_<版本>_x64-setup.exe
       # 安装向导含“安装模式”“目录选择”两页，用户可以自己选安装（解压）位置。
       - name: Build installer
+        id: bundle
         run: |
           rm -rf ../tauri-nsis.log
           set -o pipefail
@@ -387,6 +388,11 @@ jobs:
 
       - name: Verify installer output
         if: always()
+        env:
+          # 上一步的退出码走表达式传进来：`if: always()` 的步骤里拿不到
+          # `$LASTEXITCODE`（那只是本 pwsh 进程自己的），也不能写成
+          # `$env:TAURI_BUNDLE_EXIT`（根本没有这个变量，读出来永远是 $null）。
+          BUNDLE_EXIT: ${{ steps.bundle.outcome == 'success' && '0' || '1' }}
         shell: pwsh
         run: |
           $log = '../tauri-nsis.log'
@@ -400,6 +406,7 @@ jobs:
             }
           }
           # 打包失败时这一步也会跑（if: always()），这里把失败原样带出来。
+          $code = [int]$env:BUNDLE_EXIT
           if ($code -ne 0) {
             throw "cargo tauri bundle 失败（退出码 $code），见上面的 tauri bundle 注解"
           }
