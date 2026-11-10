@@ -311,6 +311,9 @@ jobs:
           ls -la sdk-cpp.zip
           rm -rf sdk-cpp && mkdir -p sdk-cpp
           unzip -qo sdk-cpp.zip -d sdk-cpp
+          # 包里的导入库是首字母大写（Ole32.Lib、kernel32.Lib），而 rustc 传下来的是
+          # 小写（ole32.lib）。Linux 大小写敏感，链接器按名字找不到，所以这里统一改成小写。
+          find sdk-cpp -iname '*.lib' -exec sh -c 'mv "$1" "$(dirname "$1")/$(basename "$1" | tr "[:upper:]" "[:lower:]")"' _ {} \;
           rm -f sdk-cpp.zip
           # 真正的库在 c/um/x64 和 c/ucrt/x64 下（x64 包才有），链接器从两者都能找到。
           # 必须用绝对路径：相对路径写进 GITHUB_ENV 后，下个步骤里会被当作相对工作目录解析。
