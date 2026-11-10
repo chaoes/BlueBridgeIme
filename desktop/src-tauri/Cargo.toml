@@ -65,7 +65,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-uti
 # 放在所有 Windows 目标下（而不是只在 cfg(target_os = "windows") 里）：安装包是在 Linux 上
 # 交叉打包的，那一侧为了让链接器少掉 MSVC 导入库（libcmt.lib 等）改用 x86_64-pc-windows-gnu，
 # 那个目标的 target_os 同样是 "windows"。
-[target.'cfg(all(windows, target_env = "msvc"))'.dependencies]
+[target.'cfg(windows)'.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
 windows-future = "0.3.2"
 windows = { version = "0.62.2", features = [
