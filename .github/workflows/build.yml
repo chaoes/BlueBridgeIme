@@ -333,35 +333,55 @@ jobs:
             echo '::warning title=llvm-rc::没找到 llvm-rc，资源编译可能失败'
           fi
           command -v llvm-rc || true
-          # ---- Windows SDK 头文件 + 导入库 ----
-          # 微软把 CRT 编译进静态库时需要 SDK 头（windows.h 等）与 MSVC 导入库；Linux 上没有，
-          # 这里用 xwin 的 split 布局把它们装到本地 <target>/xwin/splat/cache/<xwin 版本>/{crt,sdk}/，
-          # 再把这两个目录作为 -L native= 交给 rust-lld。
-          (
-            repo=https://github.com/Jake-Shadle/xwin
-            # xwin 0.10.0 的 release 资产是没打散的 tar（少了 .tar.gz 那一层压缩），解出来不是可执行文件，
-            # 这里固定用 0.8.0。
-            tag=0.8.0
-            url="$repo/releases/download/${tag}/xwin-${tag}-x86_64-unknown-linux-musl.tar.gz"
-            echo "xwin: $url"
-            mkdir -p "$HOME/.local/xwin-bin"
-            curl -fsSL "$url" | tar -xz --strip-components=1 -C "$HOME/.local/xwin-bin"
-            ls -l "$HOME/.local/xwin-bin"
-            export XWIN_ACCEPT_LICENSE=true
-            "$HOME/.local/xwin-bin/xwin" --arch x86_64 --cache-dir "$CARGO_TARGET_DIR/xwin" \
-              splat --include-debug-libs --output "$CARGO_TARGET_DIR/xwin/splat"
-          ) 2>&1 | tail -n 60
-          # xwin 的 splat 布局是 <splat>/sdk/lib/{um,ucrt}/x86_64 与 <splat>/crt/lib/x86_64，
-          # rust-lld 只认放着 *.lib 的那一级，找含 kernel32.lib / libucrt.lib 的目录一起交给它。
-          XWIN_LIBS=$(find "$CARGO_TARGET_DIR/xwin/splat" -type f \( -iname 'kernel32.lib' -o -iname 'libucrt.lib' \) -printf '%h\n' 2>/dev/null | sort -u | tr '\n' ' ')
-          echo "xwin libs: ${XWIN_LIBS:-none}"
-          if [ -z "$XWIN_LIBS" ]; then
-            echo '::error title=xwin::没能准备 Windows SDK（看上面 xwin 的输出）'
-            exit 1
-          fi
-          SDK_FLAGS="$(for d in $XWIN_LIBS; do printf -- '-L native=%s ' "$d"; done)"
+          # ---- Windows SDK 头文件 + 导入库 + MSVC CRT ----
+          # 交叉编 msvc 目标要 SDL 头（windows.h 等）、导入库（kernel32.lib 等）和 CRT 库
+          # （libcmt.lib / libvcruntime.lib / libucrt.lib），Linux 上都没有，这里从微软 CDN
+          # 拉现成的 .msi / .vsix（7z 就能解）。URL 取自 VS 175 通道 manifest，
+          # 换成别的 VS 版本时重新抓一遍即可。
+          SDK_ROOT="$CARGO_TARGET_DIR/win-sdk"
+          mkdir -p "$SDK_ROOT"
+          fetch() {
+            out="$SDK_ROOT/$1"
+            if [ -s "$out" ]; then
+              return 0
+            fi
+            echo "下载 $1"
+            curl -fsSL --retry 3 --retry-delay 5 "$2" -o "$out"
+          }
+          fetch sdk-headers-x86.msi "https://download.visualstudio.microsoft.com/download/pr/8d9439fc-b60d-44e9-88b6-bae33b111f88/Win11Sdk/Sept2026Servicing26100/WindowsSDK261009457/Installers/Windows%20SDK%20Desktop%20Headers%20x86-x86_en-us.msi"
+          fetch sdk-libs-x64.msi "https://download.visualstudio.microsoft.com/download/pr/8d9439fc-b60d-44e9-88b6-bae33b111f88/Win11Sdk/Sept2026Servicing26100/WindowsSDK261009457/Installers/Windows%20SDK%20Desktop%20Libs%20x64-x86_en-us.msi"
+          fetch ucrt.msi "https://download.visualstudio.microsoft.com/download/pr/8d9439fc-b60d-44e9-88b6-bae33b111f88/Win11Sdk/Sept2026Servicing26100/WindowsSDK261009457/Installers/Universal%20CRT%20Headers%20Libraries%20and%20Sources-x86_en-us.msi"
+          fetch crt-x64.vsix "https://download.visualstudio.microsoft.com/download/pr/67cf767c-5e71-47c2-a54a-cd5631e28942/f01f701a7bcd9587a340898c851424f6a52bb913a70c185ff0d5bf0288c5831a/Microsoft.VC.14.44.17.14.CRT.x64.Desktop.base.vsix"
+          fetch crt-headers.vsix "https://download.visualstudio.microsoft.com/download/pr/c610cd8c-801b-44b8-a80a-82cc382aeb43/852382a9aa73502b7849c1bcadfb603ba7175c4e8b60e6aba03c7de711d4ece5/Microsoft.VC.14.44.17.14.CRT.Headers.base.vsix"
+          # msi 里的文件是平的（一切进 $SDK_ROOT/developers）；vsix 里带 Contents/VC/Tools/MSVC/<ver>/ 前缀，
+          # 只把里面的 lib/ 与 include/ 取出来。
+          for msi in sdk-headers-x86.msi sdk-libs-x64.msi ucrt.msi; do
+            7z x -y -o"$SDK_ROOT/sdk" "$SDK_ROOT/$msi" > /dev/null
+          done
+          for vsix in crt-x64.vsix crt-headers.vsix; do
+            7z x -y -o"$SDK_ROOT/crt-tmp" "$SDK_ROOT/$vsix" > /dev/null
+            crt_dir=$(find "$SDK_ROOT/crt-tmp" -type d -path '*/VC/Tools/MSVC/*' | head -n 1)
+            cp -r "$crt_dir/lib" "$SDK_ROOT/crt/"
+            cp -r "$crt_dir/include" "$SDK_ROOT/crt/"
+          done
+          # rust-lld 只认放着 *.lib 的那一级：SDK 的 um/x64、ucrt/x64、CRT 的 x64 分别交给它。
+          SDK_UM="$SDK_ROOT/sdk/developers/Lib/x64/um/x64"
+          SDK_UCRT="$SDK_ROOT/sdk/developers/Lib/x64/ucrt/x64"
+          SDK_CRT="$SDK_ROOT/crt/lib/x64"
+          for d in "$SDK_UM" "$SDK_UCRT" "$SDK_CRT"; do
+            if [ -z "$(ls "$d"/*.lib 2>/dev/null)" ]; then
+              echo "::error title=Windows SDK::缺少导入库 $d"
+              ls "$SDK_ROOT/sdk/developers/Lib/x64" 2>/dev/null | head -n 20
+              exit 1
+            fi
+          done
+          # 链接器要的是 kernel32.lib / libcmt.lib 这些名字，Linux 上大小写敏感，统一改成小写。
+          find "$SDK_ROOT" -type f -iname '*.lib' -exec sh -c 'lower=$(echo "$1" | tr "[:upper:]" "[:lower:]"); [ "$1" = "$lower" ] || mv "$1" "$lower"' _ {} \;
+          SDK_FLAGS="-L native=$SDK_UM -L native=$SDK_UCRT -L native=$SDK_CRT"
           export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS="$SDK_FLAGS"
-          echo "rustflags: $CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS"
+          # tauri / cc-rs 下的 C 代码（网卡、图标资源等）也要找到 SDK 头。
+          export INCLUDE="$SDK_ROOT/sdk/developers/Include/x86;$SDK_ROOT/sdk/developers/Include/um;$SDK_ROOT/sdk/developers/Include/ucrt;$SDK_ROOT/sdk/developers/Include/shared;$SDK_ROOT/sdk/developers/Include/winrt;$SDK_ROOT/crt/include"
+          echo "rustflags: $SDK_FLAGS"
           # rust-lld 读取的是 MSVC 风格 /LIBPATH:，用 `-L native=` 交给 rustc 拼出来即可。
           LLVM_ENV='__CARGO_TEST_LLVM_LIB(=)=true'
           status=0
