@@ -255,8 +255,9 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          # 交叉打 Windows 安装包需要这个目标（bundler 在 Linux 上生成 NSIS 是官方支持的）。
-          targets: x86_64-pc-windows-msvc
+          # 交叉打 Windows 安装包需要 Windows 目标。用 GNU 版：MSVC 版要靠 libcmt.lib 等导入库，
+          # 这些只在 Visual Studio 里（VCRedist、WindowsAppSDK 包里都没有），Linux 上凑不齐。
+          targets: x86_64-pc-windows-gnu
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -298,103 +299,12 @@ jobs:
       # tauri 自己会再跑一遍 cargo，而它默认把产物写到 target-tauri，和上面的
       # `cargo build --release --bins`（rust-cache 缓存的就是 target/）完全不是一份，
       # 等于整包重编一遍；这里显式指到同一目录复用缓存。
-      #
-      # 交叉编译前提：ubuntu runner 自带的 LLVM 缺 llvm-rc（tauri-winres 要用），补装
-      # 一份 llvm + lld，并把最新那份的 bin 放到 PATH 最前面。
-# libcmt.lib 在 VS 安装包里，VCRedist 的 .exe 是自解压包（结尾是 cab），可以从里面抽出来。
-      - name: Install Windows import libraries
-        run: |
-          set -e
-          sudo apt-get install -y unzip cabextract >/dev/null
-          # Windows SDK：um 的头/库 + ucrt，用 rustc 小写的库名（Linux 大小写敏感）。
-          wget -q https://www.nuget.org/api/v2/package/Microsoft.Windows.SDK.CPP.x64/10.0.26100.1 -O sdk-cpp.zip
-          rm -rf sdk-cpp && mkdir -p sdk-cpp
-          unzip -qo sdk-cpp.zip -d sdk-cpp
-          rm -f sdk-cpp.zip
-          # 已经全是小写的（如 ucrtd.osmode_permissive.lib）跳过，否则 mv 到自己是报错退出。
-          find sdk-cpp -type f -iname '*.lib' -exec sh -c '
-            lower=$(echo "$1" | tr "[:upper:]" "[:lower:]")
-            [ "$1" = "$lower" ] || mv "$1" "$lower"
-          ' _ {} \;
-          LIBS_UM="$PWD/sdk-cpp/c/um/x64"
-          LIBS_UCRT="$PWD/sdk-cpp/c/ucrt/x64"
-          # CRT 导入库（libcmt.lib、libvcruntime.lib）：从 VC 运行库安装包里解出来。
-          # 先把里面的 cab 抽出来，再解 cab。
-          wget -q https://aka.ms/vs/17/release/vc_redist.x64.exe -O vc_redist.x64.exe
-          rm -rf vc-crt vc-sfx && mkdir -p vc-crt vc-sfx
-          cabextract -q -d vc-sfx vc_redist.x64.exe || true
-          for cab in vc-sfx/*.cab; do
-            [ -e "$cab" ] || continue
-            cabextract -q -d vc-crt "$cab" || true
-          done
-          # cab 里是按文件编号起的名字（a0、a11……），用 7z 认出来再改名。
-          sudo apt-get install -y p7zip-full >/dev/null 2>&1 || true
-          SZ=$(command -v 7z || command -v 7zz || true)
-          echo "7z: ${SZ:-none}"
-          for f in vc-crt/*; do
-            case "$f" in *.lib) continue ;; esac
-            kind=$("$SZ" l "$f" 2>/dev/null | awk '/^Type = /{print $3; exit}')
-            [ "$kind" = "CoffLib" ] && mv "$f" "$f.lib"
-          done
-          if [ -z "$SZ" ]; then
-            # 没有 7z 时按 cab 顺序猜：a0~a4 是 CRT 导入库，最后一个是 libcpmt。
-            echo "::warning title=no 7z::没有 7z，按顺序猜名字"
-            i=0
-            for f in vc-crt/a*; do
-              [ -e "$f" ] || continue
-              case $i in
-                0) mv "$f" vc-crt/libcmt.lib ;;
-                1) mv "$f" vc-crt/libvcruntime.lib ;;
-                2) mv "$f" vc-crt/libucrt.lib ;;
-                *) [ "$f" = "$(ls -v vc-crt/a* | tail -n 1)" ] && mv "$f" vc-crt/libcpmt.lib || mv "$f" "vc-crt/lib$i.lib" ;;
-              esac
-              i=$((i+1))
-            done
-          fi
-          LIBS_VC=$(find "$PWD/vc-crt" -type f -iname 'libcmt.lib' -printf '%h\n' | head -n 1)
-          if [ -z "$LIBS_VC" ]; then
-            echo "::warning title=crt not found::vc-crt 里没找到 libcmt.lib，先列出内容便于排查"
-            ls -la vc-sfx || true
-            find "$PWD/vc-crt" -type f | head -n 20 || true
-          fi
-          for dir in "$LIBS_UM" "$LIBS_UCRT" "$LIBS_VC"; do
-            if [ -z "$dir" ] || [ ! -d "$dir" ]; then
-              echo "::error title=no import libraries::缺导入库目录：${dir:-空}"
-              exit 1
-            fi
-          done
-          echo "SDK_CPP_LIB=$LIBS_UM;$LIBS_UCRT;$LIBS_VC" >> "$GITHUB_ENV"
-          echo "import libs: $LIBS_UM、$LIBS_UCRT、$LIBS_VC"
-
-      - name: Install LLVM for cross compiling
-        run: |
-          sudo apt-get update -qq || true
-          sudo apt-get install -y llvm lld || sudo apt-get install -y llvm-${LLVM_VERSION:-19} lld-${LLVM_VERSION:-19}
-          LLVM_BIN=$(dirname "$(ls -d /usr/lib/llvm-*/bin/llvm-rc 2>/dev/null | sort -V | tail -n 1)" 2>/dev/null || true)
-          if [ -z "$LLVM_BIN" ] || [ ! -x "$LLVM_BIN/llvm-rc" ]; then
-            echo "::error title=llvm-rc missing::没找到 llvm-rc，交叉编译 Windows 安装包需要它"
-            exit 1
-          fi
-          echo "$LLVM_BIN" >> "$GITHUB_PATH"
-          ls "$LLVM_BIN" | grep -E 'llvm-(rc|lib|ar)' || true
-
       - name: Prepare Windows target
         shell: bash
         run: |
           set -o pipefail
           export CARGO_TARGET_DIR="$PWD/src-tauri/target"
-          export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld
-          # rust-lld 只给 -L 找库；带上 ls 的库反而不行（会按 Linux 的格式去解析），
-          # 所以只用 -L 指到 MSVC 导入库目录。
-          if [ -z "$SDK_CPP_LIB" ]; then
-            echo "::error title=SDK_CPP_LIB missing::缺 MSVC 导入库路径，交叉链接会找不到 ole32.lib"
-            exit 1
-          fi
-          SDK_FLAGS="$(printf -- "-L native=%s " $(echo "$SDK_CPP_LIB" | tr ';' ' '))"
-          export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS="$SDK_FLAGS"
-          # cc-rs 用这个私有约定变量探测 LLVM 工具链；名字里带 `(=)`，不能用 export，得用 env。
-          LLVM_ENV='__CARGO_TEST_LLVM_LIB(=)=true'
-          env "$LLVM_ENV" cargo tauri build --target x86_64-pc-windows-msvc --no-bundle 2>&1 |
+          cargo tauri build --target x86_64-pc-windows-gnu --no-bundle 2>&1 |
             tee ../tauri-prep.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
@@ -409,7 +319,7 @@ jobs:
         run: |
           set -o pipefail
           export CARGO_TARGET_DIR="$PWD/src-tauri/target"
-          cargo tauri bundle --bundles nsis --ci --target x86_64-pc-windows-msvc 2>&1 |
+          cargo tauri bundle --bundles nsis --ci --target x86_64-pc-windows-gnu 2>&1 |
             tee ../tauri-nsis.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
@@ -422,7 +332,7 @@ jobs:
       - name: Collect Windows installer
         run: |
           mkdir -p dist
-          src=$(ls src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe)
+          src=$(ls src-tauri/target/x86_64-pc-windows-gnu/release/bundle/nsis/*-setup.exe)
           cp "$src" "dist/bluetooth-input-bridge-${GITHUB_REF_NAME#v}-windows-x64-setup.exe"
           ls -l dist
 
@@ -499,10 +409,25 @@ jobs:
           workspaces: desktop/src-tauri -> target
 
       # 安装包（NSIS）改在 linux 的 Debian 作业里打，Windows 这里只负责编译与自检。
+      # install-action 没有 tauri-cli 的预编译包时会退回到 cargo-binstall，再退回到源码编译，
+      # 一次要十几分钟；直接下官方 release 的二进制，几秒钟的事。
       - name: Set up Tauri CLI
-        uses: taiki-e/install-action@v2
-        with:
-          tool: tauri-cli@2
+        shell: bash
+        env:
+          TAURI_CLI_VERSION: 2.12.4
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin"
+          url="https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v${TAURI_CLI_VERSION}/cargo-tauri-x86_64-unknown-linux-gnu.tgz"
+          for attempt in 1 2 3 4 5; do
+            if wget -q -O /tmp/cargo-tauri.tgz "$url"; then break; fi
+            echo "download failed (attempt $attempt)"
+            sleep 5
+          done
+          tar -xzf /tmp/cargo-tauri.tgz -C "$HOME/.local/bin"
+          chmod +x "$HOME/.local/bin/cargo-tauri"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/cargo-tauri" --version
 
       - name: Build binaries
         run: cargo build --locked --release --manifest-path src-tauri/Cargo.toml --bins
@@ -550,7 +475,8 @@ jobs:
     name: Release
     # 永远跑：Windows 安装包那一步挂掉也不该把 apk、Linux 包、LÖVE 包一起扣下。
     if: always() && startsWith(github.ref, 'refs/tags/v')
-    needs: [android, desktop, desktop-deb, desktop-arch, love, windows]
+    # 不列 desktop-deb：它的产物是 .deb 和 Windows 安装包，失败时不该挡住 apk / Linux / LÖVE 的发布。
+    needs: [android, desktop, desktop-arch, love, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
