@@ -239,20 +239,35 @@ jobs:
           # gcc-mingw-w64-x86-64：交叉编 Windows（GNU 目标）时 cc-rs / rustc 要用 dlltool、windres。
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
             libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev libssl-dev pkg-config \
-            gcc-mingw-w64-x86-64
+            gcc-mingw-w64-x86-64 nsis
 
       # apt 偶发 429/网络抖动时不要整包失败：缺的库下面那步会逐个报出来。
       - name: Verify dependencies
         run: |
           status=0
-          for dep in libssl-dev libgtk-3-dev librsvg2-dev libsoup-3.0-dev libwebkit2gtk-4.1-dev gcc-mingw-w64-x86-64; do
+          for dep in libssl-dev libgtk-3-dev librsvg2-dev libsoup-3.0-dev libwebkit2gtk-4.1-dev gcc-mingw-w64-x86-64 nsis; do
             if ! dpkg -s "$dep" >/dev/null 2>&1; then
               echo "::error title=missing dependency::$dep 没装上（apt 步骤可能因为网络失败，见 ${{ steps.deps.outcome }}）"
               status=1
             fi
           done
           pkg-config --modversion gtk+-3.0 openssl 2>&1 || true
+          command -v makensis && makensis -VERSION || true
           exit $status
+
+      # tauri 交叉打 NSIS 包时会去找 makensis.exe：Linux 的 Ubuntu 包把它装在
+      # /usr/bin/makensis（NSIS 3.x），这里补一个 .exe 名字的入口，省得去装别的东西。
+      - name: Provide makensis.exe
+        run: |
+          makensis_path=$(command -v makensis || true)
+          if [ -z "$makensis_path" ]; then
+            echo "::error title=makensis missing::apt 没装上 nsis，打不出安装包"
+            exit 1
+          fi
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$makensis_path" "$HOME/.local/bin/makensis.exe"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/makensis.exe" -VERSION
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -321,15 +336,27 @@ jobs:
         run: |
           set -o pipefail
           export CARGO_TARGET_DIR="$PWD/src-tauri/target"
+          # 日志多留一些：交叉打包的报错有时只出现在更早的行里。
+          export RUST_BACKTRACE=1
           cargo tauri bundle --bundles nsis --ci --target x86_64-pc-windows-gnu 2>&1 |
             tee ../tauri-nsis.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            tail -n 30 ../tauri-nsis.log | while IFS= read -r line; do
+            tail -n 80 ../tauri-nsis.log | while IFS= read -r line; do
               echo "::warning title=tauri bundle::${line:0:600}"
             done
+            tail -n 120 ../tauri-nsis.log > ../tauri-nsis-tail.txt
             exit "$status"
           fi
+
+      - name: Upload bundle log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-log
+          path: tauri-nsis.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Collect Windows installer
         run: |
