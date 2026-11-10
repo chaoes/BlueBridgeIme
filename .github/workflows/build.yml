@@ -350,6 +350,29 @@ jobs:
           echo '--- bundle inputs staged ---'
           find target/bundle -maxdepth 4 2>/dev/null | head -30 || true
           ls -la src-tauri/target/bundle/resources/ 2>&1 | head || true
+          # 交叉打 NSIS 包时 bundler 只报一句 `No such file or directory (os error 2)`，
+          # 这里在调用前后各跑一遍同样的 Tauri 引擎（带 backtrace），并在期间轮询目标目录，
+          # 把失败时刻创建的文件连同路径一起打出来，便于定位到底缺什么。
+          snap() {
+            find src-tauri/target/x86_64-pc-windows-gnu/release/bundle src-tauri/target/release/bundle \
+              "$HOME/.cache/tauri" -maxdepth 6 2>/dev/null | sort
+          }
+          snap > ../snap-before.txt
+          export RUST_BACKTRACE=full RUST_LOG=debug
+          cargo tauri bundle --bundles nsis --ci --target x86_64-pc-windows-gnu 2>&1 |
+            tee ../tauri-nsis.log > /dev/null &
+          bundle_pid=$!
+          for _ in $(seq 1 600); do
+            kill -0 "$bundle_pid" 2>/dev/null || break
+            snap > ../snap-now.txt 2>/dev/null
+            sleep 0.2
+          done
+          wait "$bundle_pid" || true
+          snap > ../snap-after.txt
+          echo '--- files seen while bundling (diff) ---'
+          diff ../snap-before.txt ../snap-now.txt | head -60 || true
+          diff ../snap-before.txt ../snap-after.txt | head -40 || true
+          echo '--- re-run with backtrace ---'
           cargo tauri bundle --bundles nsis --ci --target x86_64-pc-windows-gnu 2>&1 |
             tee ../tauri-nsis.log
           status=${PIPESTATUS[0]}
