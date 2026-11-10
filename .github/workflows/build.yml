@@ -466,20 +466,32 @@ jobs:
 
       - name: Package
         run: |
+          # 每个产物单独取：某个作业没产出（例如 Windows 安装包没打出来）只少一个文件，
+          # 不该把 apk、deb、Arch 包、LÖVE 包一起扣下。
           mkdir -p dist
-          cp artifacts/android-apk/*.apk dist/
-          cp artifacts/desktop-deb/*.deb dist/
-          cp artifacts/desktop-arch/*.pkg.tar.zst dist/
-          cp artifacts/love-builds/*.love artifacts/love-builds/*.zip artifacts/love-builds/*.tar.gz dist/
-          cp artifacts/desktop-linux/bluetooth-input-desktop \
-             artifacts/desktop-linux/bluetooth-input-bridge-service dist/
-          cp artifacts/desktop-windows-installer/*.exe dist/
-          chmod +x dist/bluetooth-input-desktop dist/bluetooth-input-bridge-service
+          copy() {
+            local pattern=$1
+            if compgen -G "$pattern" > /dev/null; then
+              cp $pattern dist/
+            else
+              echo "::warning title=missing artifact::没有找到 $pattern"
+            fi
+          }
+          copy 'artifacts/android-apk/*.apk'
+          copy 'artifacts/desktop-deb/*.deb'
+          copy 'artifacts/desktop-arch/*.pkg.tar.zst'
+          copy 'artifacts/love-builds/*.love'
+          copy 'artifacts/love-builds/*.zip'
+          copy 'artifacts/love-builds/*.tar.gz'
+          copy 'artifacts/desktop-linux/bluetooth-input-desktop'
+          copy 'artifacts/desktop-linux/bluetooth-input-bridge-service'
+          copy 'artifacts/desktop-windows-installer/*.exe'
+          chmod +x dist/bluetooth-input-desktop dist/bluetooth-input-bridge-service 2>/dev/null || true
           (cd dist && tar -czf bluetooth-input-bridge-linux-x86_64.tar.gz \
              bluetooth-input-desktop bluetooth-input-bridge-service)
-          (cd dist && sha256sum *.apk *.tar.gz *.deb *.pkg.tar.zst *.zip *.love *.exe > SHA256SUMS.txt)
+          (cd dist && ls *.apk *.tar.gz *.deb *.pkg.tar.zst *.zip *.love *.exe >/dev/null 2>&1 \
+             && sha256sum *.apk *.tar.gz *.deb *.pkg.tar.zst *.zip *.love *.exe > SHA256SUMS.txt)
           ls -l dist
-
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
