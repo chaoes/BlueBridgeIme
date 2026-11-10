@@ -344,7 +344,8 @@ jobs:
             url="$repo/releases/download/${tag}/xwin-${tag}-x86_64-unknown-linux-musl.tar.gz"
             echo "xwin: $url"
             mkdir -p "$HOME/.local/xwin-bin"
-            curl -fsSL "$url" | tar -xz -C "$HOME/.local/xwin-bin" --strip-components=1 xwin-*/xwin
+            mkdir -p "$HOME/.local/xwin-bin/xwin"
+          curl -fsSL "$url" | tar -xz --strip-components=1 -C "$HOME/.local/xwin-bin/xwin"
             ls -l "$HOME/.local/xwin-bin"
             "$HOME/.local/xwin-bin/xwin" --accept-license --arch x86_64 --include-debug-libs \
               --output "$CARGO_TARGET_DIR/xwin" splat
