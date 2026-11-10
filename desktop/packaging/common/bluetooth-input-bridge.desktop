@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Bluetooth Input Bridge
+Name[zh_CN]=蓝牙输入桥
+Name[ru]=Bluetooth Input Bridge
+Name[ja]=Bluetooth Input Bridge
+Name[ko]=Bluetooth Input Bridge
+Comment=Type on your phone, get the text on this computer over Bluetooth
+Comment[zh_CN]=用手机通过蓝牙给这台电脑输入文字
+Exec=bluetooth-input-desktop
+Icon=bluetooth-input-bridge
+Terminal=false
+Categories=Utility;Accessibility;
+Keywords=bluetooth;keyboard;input;phone;
+StartupWMClass=bluetooth-input-desktop

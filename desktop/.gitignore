@@ -6,3 +6,10 @@
 # build.rs 从 tauri-bundler 模板补丁生成
 /src-tauri/generated-nsis
 .DS_Store
+/dist
+
+# Arch packaging output
+packaging/arch/src/
+packaging/arch/pkg/
+packaging/arch/*.pkg.tar.zst
+packaging/arch/*.pkg.tar.zst.sig

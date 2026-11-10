@@ -142,8 +142,125 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+# 桌面端的 LÖVE 版界面：官方运行时 + 我们的 .love，顺带给 Linux 包塞进服务二进制。
+  love:
+    name: LÖVE front-end
+    needs: [desktop]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: love
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Download service binary
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-linux
+          path: love/dist/service
+
+      - name: Package LÖVE builds
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.1.0.${GITHUB_RUN_NUMBER}"
+          chmod +x package.sh
+          ./package.sh "$VERSION" dist dist/service/bluetooth-input-bridge-service
+          rm -rf dist/service
+
+      - name: Upload LÖVE packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: love-builds
+          path: |
+            love/dist/*.love
+            love/dist/*.zip
+            love/dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  desktop-deb:
+    name: Debian package
+    # 打标签和手动触发时构建；普通 push/PR 不跑，避免占用时间。
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev libssl-dev pkg-config
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+
+      - name: Build release binaries
+        run: cargo build --locked --release --bins --manifest-path src-tauri/Cargo.toml
+
+      - name: Build .deb
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.1.0.${GITHUB_RUN_NUMBER}"
+          bash packaging/deb/build.sh "$VERSION" amd64 "$PWD/dist"
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-deb
+          path: desktop/dist/*.deb
+          if-no-files-found: error
+          retention-days: 14
+
+  desktop-arch:
+    name: Arch package
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    container:
+      image: archlinux:base-devel
+    timeout-minutes: 60
+    steps:
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm --needed git rust webkit2gtk-4.1 gtk3 \
+            libsoup3 librsvg libevdev openssl pkgconf shadow
+
+      - name: Check out
+        uses: actions/checkout@v4
+
+      # makepkg 拒绝以 root 运行，建个普通用户来打包。
+      - name: Build package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.1.0.${GITHUB_RUN_NUMBER}"
+          workdir="$GITHUB_WORKSPACE/desktop/packaging/arch"
+          sed -i "s/^pkgver=.*/pkgver=$VERSION/" "$workdir/PKGBUILD"
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          su builder -c "cd $workdir && makepkg -f --noconfirm"
+
+      - name: Upload Arch package
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-arch
+          path: desktop/packaging/arch/*.pkg.tar.zst
+          if-no-files-found: error
+          retention-days: 14
+
   # Windows 后端：Win32 蓝牙 RFCOMM（AF_BTH + WSASetService）+ SendInput 文字注入，
-  # 实现说明见 desktop/docs/windows.md。
+  # 实现说明见 desktop/docs/windows.md；安装包由 tauri CLI 打成 NSIS。
   windows:
     name: Windows
     runs-on: windows-latest
@@ -162,6 +279,16 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri -> target
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          # tauri 的 NSIS 打包器会自己寻找 makensis；找不到就先装好，避免现场下载。
+          if (-not (Get-Command makensis.exe -ErrorAction SilentlyContinue)) {
+            choco install nsis --no-progress -y
+            'C:\Program Files (x86)\NSIS' | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+          Get-Command makensis.exe | Select-Object -ExpandProperty Source
 
       # 安装包由 tauri CLI 负责打包；界面二进制仍由下面的 cargo build 产出，
       # tauri 打包时不会重新编译 Rust，只把它和图标、钩子脚本一起塞进 NSIS。
@@ -223,7 +350,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [android, desktop, windows]
+    needs: [android, desktop, desktop-deb, desktop-arch, love, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -237,13 +364,16 @@ jobs:
         run: |
           mkdir -p dist
           cp artifacts/android-apk/*.apk dist/
+          cp artifacts/desktop-deb/*.deb dist/
+          cp artifacts/desktop-arch/*.pkg.tar.zst dist/
+          cp artifacts/love-builds/*.love artifacts/love-builds/*.zip artifacts/love-builds/*.tar.gz dist/
           cp artifacts/desktop-linux/bluetooth-input-desktop \
              artifacts/desktop-linux/bluetooth-input-bridge-service dist/
           cp artifacts/desktop-windows-installer/*.exe dist/
           chmod +x dist/bluetooth-input-desktop dist/bluetooth-input-bridge-service
           (cd dist && tar -czf bluetooth-input-bridge-linux-x86_64.tar.gz \
              bluetooth-input-desktop bluetooth-input-bridge-service)
-          (cd dist && sha256sum *.apk *.tar.gz *.exe > SHA256SUMS.txt)
+          (cd dist && sha256sum *.apk *.tar.gz *.deb *.pkg.tar.zst *.zip *.love *.exe > SHA256SUMS.txt)
           ls -l dist
 
       - name: Publish release
@@ -251,7 +381,11 @@ jobs:
         with:
           files: |
             dist/*.apk
+            dist/*.deb
+            dist/*.pkg.tar.zst
             dist/*.tar.gz
+            dist/*.zip
+            dist/*.love
             dist/*.exe
             dist/SHA256SUMS.txt
           generate_release_notes: true
