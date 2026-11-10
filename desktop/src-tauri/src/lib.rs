@@ -85,6 +85,56 @@ fn get_locale() -> &'static str {
     ui_locale(sys_locale::get_locale().as_deref())
 }
 
+/// Platform the UI is running on. The frontend has no reliable way to know this
+/// (the webview User-Agent is the same engine on every OS), and several labels —
+/// the platform badge, where the Bluetooth service is registered, which system
+/// settings page holds the pairing switch — differ per OS. Snowmen here rather
+/// than in JS so the frontend never has to guess.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlatformInfo {
+    /// `"windows"`, `"linux"` or `"unsupported"`.
+    os: &'static str,
+    /// Human-readable label for the badge in the title bar, e.g. `Windows 10/11`.
+    label: &'static str,
+    /// i18n key of the note under the 服务注册 switch: where the RFCOMM service
+    /// is published (BlueZ / the Windows Bluetooth SDP store).
+    registration_note_key: &'static str,
+    /// i18n key of the pairing hint: which system UI to open when pairing fails.
+    pairing_hint_key: &'static str,
+}
+
+#[tauri::command]
+fn get_platform() -> PlatformInfo {
+    #[cfg(target_os = "windows")]
+    {
+        PlatformInfo {
+            os: "windows",
+            label: "Windows 10/11",
+            registration_note_key: "registrationNoteOnWindows",
+            pairing_hint_key: "pairingHintWindows",
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        PlatformInfo {
+            os: "linux",
+            label: "GNOME · Wayland",
+            registration_note_key: "registrationNoteOnLinux",
+            pairing_hint_key: "pairingHintLinux",
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        PlatformInfo {
+            os: "unsupported",
+            label: "Unsupported",
+            registration_note_key: "registrationNoteOnLinux",
+            pairing_hint_key: "pairingHintLinux",
+        }
+    }
+}
+
 #[tauri::command]
 async fn get_status() -> ServiceStatus {
     #[cfg(target_os = "linux")]
@@ -269,6 +319,7 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_locale,
+            get_platform,
             get_status,
             set_registration,
             set_autostart,

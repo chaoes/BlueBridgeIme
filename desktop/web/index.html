@@ -15,7 +15,8 @@
         <h1 data-i18n="brand">蓝牙输入桥</h1>
         <p data-i18n="tagline">让手机输入法为这台电脑输入文字</p>
       </div>
-      <span class="platform">GNOME · Wayland</span>
+      <!-- 平台标签由后端的 get_platform 决定（Windows / Linux），不要在这里写死系统名。 -->
+      <span class="platform" id="platform"></span>
     </header>
 
     <section class="status-card">
@@ -61,13 +62,13 @@
           <li data-i18n="guideStep3">在手机上打字，电脑端自动粘贴。</li>
         </ol>
         <button id="pairing" type="button" data-i18n="pairingButton">允许配对 3 分钟</button>
-        <p id="pairing-result" class="tiny" data-i18n="pairingHint">首次配对时使用；若系统拒绝，可在 GNOME 蓝牙设置中开启。</p>
+        <p id="pairing-result" class="tiny" data-i18n="pairingHint">首次配对时使用；若系统拒绝，可在系统蓝牙设置中开启。</p>
       </article>
 
       <article class="card">
         <span class="step">02</span>
         <h2 data-i18n="testTitle">测试输入框</h2>
-        <p class="intro" data-i18n="testIntro">用来试打字，确认键盘和输入法正常。内容只留在本窗口，不会发送，也不会粘贴到别处。</p>
+        <p class="intro" data-i18n="testIntro">用来试打字，确认键盘和输入法正常。内容只留在本窗口，不会发送，也不会输入到别处。</p>
         <textarea id="test-text" data-i18n-placeholder="testPlaceholder" placeholder="在这里试打字…" spellcheck="false"></textarea>
       </article>
     </section>
