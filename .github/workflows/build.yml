@@ -299,10 +299,8 @@ jobs:
       # `cargo build --release --bins`（rust-cache 缓存的就是 target/）完全不是一份，
       # 等于整包重编一遍；这里显式指到同一目录复用缓存。
       #
-      # 交叉编译前提：runner 上没有 llvm-rc，tauri-winres 会 panic，所以先装 LLVM，
-      # 再用 CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld 链接。
-      # ubuntu-24.04 runner 自带的 LLVM 缺 llvm-rc（tauri-winres 要用），补装一份，
-      # 并把最新那份的 bin 放到 PATH 最前面。
+      # 交叉编译前提：ubuntu runner 自带的 LLVM 缺 llvm-rc（tauri-winres 要用），补装
+      # 一份 llvm + lld，并把最新那份的 bin 放到 PATH 最前面。
       - name: Install LLVM for cross compiling
         run: |
           sudo apt-get update -qq || true
@@ -314,13 +312,15 @@ jobs:
           fi
           echo "$LLVM_BIN" >> "$GITHUB_PATH"
           ls "$LLVM_BIN" | grep -E 'llvm-(rc|lib|ar)' || true
-
       - name: Prepare Windows target
         shell: bash
         run: |
           set -o pipefail
           export CARGO_TARGET_DIR="$PWD/src-tauri/target"
           export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld
+          # rust-lld 只给 -L 找库；带上 ls 的库反而不行（会按 Linux 的格式去解析），
+          # 所以只用 -L 指到 MSVC 导入库目录。
+          export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS="-L native=$SDK_CPP_LIB"
           # cc-rs 用这个私有约定变量探测 LLVM 工具链；名字里带 `(=)`，不能用 export，得用 env。
           LLVM_ENV='__CARGO_TEST_LLVM_LIB(=)=true'
           env "$LLVM_ENV" cargo tauri build --target x86_64-pc-windows-msvc --no-bundle 2>&1 |
