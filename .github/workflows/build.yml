@@ -346,7 +346,8 @@ jobs:
             mkdir -p "$HOME/.local/xwin-bin"
           curl -fsSL "$url" | tar -xz --strip-components=1 -C "$HOME/.local/xwin-bin"
             ls -l "$HOME/.local/xwin-bin"
-            export XWIN_ACCEPT_LICENSE=1
+            # xwin 的 --accept-license 是 bool，env 里只能写 true
+            export XWIN_ACCEPT_LICENSE=true
             "$HOME/.local/xwin-bin/xwin" --arch x86_64 --cache-dir "$CARGO_TARGET_DIR/xwin" \
               splat --output "$CARGO_TARGET_DIR/xwin/splat"
             echo "---- xwin 装出来的目录 ----"
