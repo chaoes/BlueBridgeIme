@@ -301,9 +301,8 @@ jobs:
       #
       # 交叉编译前提：ubuntu runner 自带的 LLVM 缺 llvm-rc（tauri-winres 要用），补装
       # 一份 llvm + lld，并把最新那份的 bin 放到 PATH 最前面。
-      # 链接 Windows 的 exe 需要 MSVC 那套导入库（ole32.lib、user32.lib…），Linux 上没有。
-      # NuGet 上的 Microsoft.Windows.SDK.CPP.x64 只是空的 metapackage（几百字节，没有 lib），
-      # 真正带 lib 的是 Microsoft.Windows.SDK.CPP.arm64 里的 x64 那一份，体积也大得多。
+      # 链接 Windows 的 exe 需要 MSVC 那套导入库（ole32.lib、user32.lib…），Linux 上没有，
+      # 从微软的 NuGet 包 Microsoft.Windows.SDK.CPP.x64 里取（约 50 MB，只链接期需要）。
       - name: Install Windows import libraries
         run: |
           set -e
@@ -317,20 +316,16 @@ jobs:
           # 必须用绝对路径：相对路径写进 GITHUB_ENV 后，下个步骤里会被当作相对工作目录解析。
           LIBS_UM="$PWD/sdk-cpp/c/um/x64"
           LIBS_UCRT="$PWD/sdk-cpp/c/ucrt/x64"
+          # 包里的文件名是首字母大写（Ole32.Lib），Linux 上大小写敏感，按 -iname 找。
           for dir in "$LIBS_UM" "$LIBS_UCRT"; do
-            if [ ! -f "$dir/ole32.lib" ]; then
+            if [ -z "$(find "$dir" -maxdepth 1 -iname ole32.lib | head -n 1)" ]; then
               echo "::error title=no import libraries::包里没找到 ole32.lib（$dir）"
+              ls "$dir" | head -n 20
               exit 1
             fi
           done
           echo "SDK_CPP_LIB=$LIBS_UM;$LIBS_UCRT" >> "$GITHUB_ENV"
           echo "import libs: $LIBS_UM + $LIBS_UCRT"; ls "$LIBS_UM" | wc -l
-          if [ -z "$LIBS" ] || [ ! -d "$LIBS" ]; then
-            echo "::error title=no import libraries::包里没找到 ole32.lib，路径不对"
-            exit 1
-          fi
-          echo "SDK_CPP_LIB=$LIBS" >> "$GITHUB_ENV"
-          echo "import libs: $LIBS"; ls "$LIBS" | wc -l
 
       - name: Install LLVM for cross compiling
         run: |
