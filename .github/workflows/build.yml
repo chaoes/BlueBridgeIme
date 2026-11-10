@@ -307,13 +307,13 @@ jobs:
         run: |
           sudo apt-get update -qq || true
           sudo apt-get install -y llvm lld || sudo apt-get install -y llvm-${LLVM_VERSION:-19} lld-${LLVM_VERSION:-19}
-          LLVM_BIN=$(dirname "$(ls -d /usr/lib/llvm-*/bin/llvm-rc 2>/dev/null | sort -V | tail -n 1)")
+          LLVM_BIN=$(dirname "$(ls -d /usr/lib/llvm-*/bin/llvm-rc 2>/dev/null | sort -V | tail -n 1)" 2>/dev/null || true)
           if [ -z "$LLVM_BIN" ] || [ ! -x "$LLVM_BIN/llvm-rc" ]; then
             echo "::error title=llvm-rc missing::没找到 llvm-rc，交叉编译 Windows 安装包需要它"
             exit 1
           fi
           echo "$LLVM_BIN" >> "$GITHUB_PATH"
-          "$LLVM_BIN/llvm-rc" --version
+          ls "$LLVM_BIN" | grep -E 'llvm-(rc|lib|ar)' || true
 
       - name: Prepare Windows target
         shell: bash
