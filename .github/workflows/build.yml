@@ -240,7 +240,7 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
             libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev libssl-dev pkg-config \
             gcc-mingw-w64-x86-64 nsis \
-            llvm lld clang
+            llvm lld clang cabextract wget unzip
 
       # apt 偶发 429/网络抖动时不要整包失败：缺的库下面那步会逐个报出来。
       - name: Verify dependencies
@@ -333,6 +333,31 @@ jobs:
             echo '::warning title=llvm-rc::没找到 llvm-rc，资源编译可能失败'
           fi
           command -v llvm-rc || true
+          # ---- Windows SDK 头文件 + 导入库 ----
+          # 微软把 CRT 编译进静态库时需要 SDK 头（windows.h 等）与 MSVC 导入库；Linux 上没有，
+          # 这里用 xwin 的 split 布局把它们装到本地 <target>/xwin/splat/cache/<xwin 版本>/{crt,sdk}/，
+          # 再把这两个目录作为 -L native= 交给 rust-lld。
+          (
+            repo=https://github.com/Jake-Shadle/xwin
+            tag=$(curl -fsSL "https://api.github.com/repos/Jake-Shadle/xwin/releases/latest" | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4)
+            [ -n "$tag" ] || tag=v0.6.5
+            url="$repo/releases/download/${tag}/xwin-${tag}-x86_64-unknown-linux-musl.tar.gz"
+            echo "xwin: $url"
+            mkdir -p "$HOME/.local/xwin-bin"
+            curl -fsSL "$url" | tar -xz -C "$HOME/.local/xwin-bin" --strip-components=1 xwin-*/xwin
+            ls -l "$HOME/.local/xwin-bin"
+            "$HOME/.local/xwin-bin/xwin" --accept-license --arch x86_64 --include-debug-libs \
+              --output "$CARGO_TARGET_DIR/xwin" splat
+          ) 2>&1 | tail -n 40
+          XWIN_PATHS=$(find "$CARGO_TARGET_DIR/xwin" -mindepth 2 -maxdepth 2 -type d \( -name 'crt' -o -name 'sdk' \) 2>/dev/null | sort | tr '\n' ' ')
+          echo "xwin paths: ${XWIN_PATHS:-none}"
+          if [ -z "$XWIN_PATHS" ]; then
+            echo '::error title=xwin::没能准备 Windows SDK（看上面 xwin 的输出）'
+            exit 1
+          fi
+          SDK_FLAGS="$(for d in $XWIN_PATHS; do printf -- '-L native=%s ' "$d"; done)"
+          export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS="$SDK_FLAGS"
+          echo "rustflags: $CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS"
           # rust-lld 读取的是 MSVC 风格 /LIBPATH:，用 `-L native=` 交给 rustc 拼出来即可。
           LLVM_ENV='__CARGO_TEST_LLVM_LIB(=)=true'
           status=0
