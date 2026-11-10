@@ -338,6 +338,18 @@ jobs:
           export CARGO_TARGET_DIR="$PWD/src-tauri/target"
           # 日志多留一些：交叉打包的报错有时只出现在更早的行里。
           export RUST_BACKTRACE=1
+          echo '--- nsis cache before ---'
+          ls -laR "$HOME/.cache/tauri/NSIS" 2>&1 | head -40 || true
+          echo '--- env ---'
+          echo "PWD=$PWD"; command -v makensis; command -v makensis.exe; echo "PATH=$PATH"
+          echo '--- config bundle paths ---'
+          jq -r '.bundle | {icons: .icon, resources: .resources, windows}' tauri.conf.json 2>/dev/null || true
+          for p in icons/32x32.png icons/icon.ico gen/nsis/SimpChinese.nsh gen/nsis/English.nsh gen/nsis/installer-hooks.nsh generated-nsis/installer.nsi gen/nsis/directory-page.patch.nsi gen/nsis/language-selector.patch.nsi; do
+            if [ -e "$p" ]; then echo "ok   $p -> $(realpath $p)"; else echo "MISS $p (cwd $PWD, tauri dir $PWD/src-tauri -> $(realpath src-tauri/$p 2>&1)) "; fi
+          done
+          echo '--- bundle inputs staged ---'
+          find target/bundle -maxdepth 4 2>/dev/null | head -30 || true
+          ls -la src-tauri/target/bundle/resources/ 2>&1 | head || true
           cargo tauri bundle --bundles nsis --ci --target x86_64-pc-windows-gnu 2>&1 |
             tee ../tauri-nsis.log
           status=${PIPESTATUS[0]}
