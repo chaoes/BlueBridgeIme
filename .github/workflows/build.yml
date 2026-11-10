@@ -192,6 +192,7 @@ jobs:
             if [ -f "$dir/bluetooth-input-bridge-service.exe" ] && [ -f "$dir/bluetooth-input-bridge-socket.exe" ]; then
               echo "拿到 Windows 二进制"
               exit 0
+            fi
             sleep 10
             ( cd "$GITHUB_WORKSPACE/love" && gh run download "$GITHUB_RUN_ID" -n desktop-windows -D dist/win ) || true
           done
