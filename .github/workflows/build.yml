@@ -346,8 +346,11 @@ jobs:
             mkdir -p "$HOME/.local/xwin-bin"
           curl -fsSL "$url" | tar -xz --strip-components=1 -C "$HOME/.local/xwin-bin"
             ls -l "$HOME/.local/xwin-bin"
-            "$HOME/.local/xwin-bin/xwin" --accept-license --arch x86_64 \
-            splat --output "$CARGO_TARGET_DIR/xwin"
+            export XWIN_ACCEPT_LICENSE=1
+            "$HOME/.local/xwin-bin/xwin" --arch x86_64 --cache-dir "$CARGO_TARGET_DIR/xwin" \
+              splat --output "$CARGO_TARGET_DIR/xwin/splat"
+            echo "---- xwin 装出来的目录 ----"
+            find "$CARGO_TARGET_DIR/xwin" -maxdepth 4 -type d | sort | head -n 40
           ) 2>&1 | tail -n 40
           XWIN_PATHS=$(find "$CARGO_TARGET_DIR/xwin" -mindepth 2 -maxdepth 2 -type d \( -name 'crt' -o -name 'sdk' \) 2>/dev/null | sort | tr '\n' ' ')
           echo "xwin paths: ${XWIN_PATHS:-none}"
