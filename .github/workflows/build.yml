@@ -145,9 +145,8 @@ jobs:
 # 桌面端的 LÖVE 版界面：官方运行时 + 我们的 .love，顺带给 Linux 包塞进服务二进制。
   love:
     name: LÖVE front-end
-    needs: [desktop, windows]
-    # 只在打标签（或手动触发）时出包：Windows 二进制来自 installer 作业的产物，
-    # 而那个作业本身只在标签/手动触发时运行，普通 push 上它不存在。
+    needs: [desktop]
+    # 只在打标签（或手动触发）时出包（Windows 二进制来自 windows 作业的产物）。
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -165,11 +164,31 @@ jobs:
           path: love/dist/service
 
       # Windows 的 LÖVE 包里要放服务二进制和命名管道转接程序。
+      # Windows 包要带上服务与 socket 桥（artifact 由 windows 作业上传）。
+      # 放在这里而不是 needs 里：Windows 作业跑挂了也不该拖住其余平台的发布，
+      # 拿不到就跳过，只是少一个 zip。
       - name: Download Windows binaries
+        id: win
+        if: always()
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: desktop-windows
           path: love/dist/win
+
+      - name: Wait for Windows binaries
+        shell: bash
+        run: |
+          # 下载是异步的：等 Windows 作业结束（最多 30 分钟）再打包，免得抢跑拿到半个目录。
+          dir=dist/win
+          for i in $(seq 1 180); do
+            if [ -f "$dir/bluetooth-input-bridge-service.exe" ] && [ -f "$dir/bluetooth-input-bridge-socket.exe" ]; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "提示：30 分钟内没等到 Windows 二进制，只出其余平台的包"
+          exit 0
 
       - name: Package LÖVE builds
         run: |
@@ -444,7 +463,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [android, desktop, desktop-deb, desktop-arch, love, windows]
+    needs: [android, desktop, desktop-deb, desktop-arch, love]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
