@@ -308,8 +308,9 @@ jobs:
           set -o pipefail
           export CARGO_TARGET_DIR="$PWD/src-tauri/target"
           export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld
-          export __CARGO_TEST_LLVM_LIB\(=\)true
-          cargo tauri build --target x86_64-pc-windows-msvc --no-bundle 2>&1 |
+          # cc-rs 用这个私有约定变量探测 LLVM 工具链；名字里带 `(=)`，不能用 export，得用 env。
+          LLVM_ENV='__CARGO_TEST_LLVM_LIB(=)=true'
+          env "$LLVM_ENV" cargo tauri build --target x86_64-pc-windows-msvc --no-bundle 2>&1 |
             tee ../tauri-prep.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
