@@ -307,44 +307,32 @@ jobs:
         run: |
           set -e
           sudo apt-get install -y unzip >/dev/null
+      # libcmt.lib 在 VS 安装包里，VCRedist 的 .exe 是自解压包（结尾是 cab），可以从里面抽出来。
+      - name: Install Windows import libraries
+        run: |
+          set -e
+          sudo apt-get install -y unzip cabextract >/dev/null
+          # Windows SDK：um 的头/库 + ucrt，用 rustc 小写的库名（Linux 大小写敏感）。
           wget -q https://www.nuget.org/api/v2/package/Microsoft.Windows.SDK.CPP.x64/10.0.26100.1 -O sdk-cpp.zip
-          # Windows SDK 包里没有 CRT 的导入库（libcmt.lib / libvcruntime.lib），
-          # 它们住在 MSVC 运行库包里。
-          wget -q https://www.nuget.org/api/v2/package/Microsoft.VC.14.44.17.14.CRT.x64.Desktop/14.44.35211 -O vc-crt.zip
-          ls -la vc-crt.zip
-          unzip -qo vc-crt.zip -d vc-crt
-          ls -la sdk-cpp.zip
           rm -rf sdk-cpp && mkdir -p sdk-cpp
           unzip -qo sdk-cpp.zip -d sdk-cpp
-          # 包里的导入库是首字母大写（Ole32.Lib、kernel32.Lib），而 rustc 传下来的是
-          # 小写（ole32.lib）。Linux 大小写敏感，链接器按名字找不到，所以这里统一改成小写。
-          find sdk-cpp -iname '*.lib' -exec sh -c 'mv "$1" "$(dirname "$1")/$(basename "$1" | tr "[:upper:]" "[:lower:]")"' _ {} \;
           rm -f sdk-cpp.zip
-          # 真正的库在 c/um/x64 和 c/ucrt/x64 下（x64 包才有），链接器从两者都能找到。
-          # 必须用绝对路径：相对路径写进 GITHUB_ENV 后，下个步骤里会被当作相对工作目录解析。
+          find sdk-cpp -iname '*.lib' -exec sh -c 'mv "$1" "$(dirname "$1")/$(basename "$1" | tr "[:upper:]" "[:lower:]")"' _ {} \;
           LIBS_UM="$PWD/sdk-cpp/c/um/x64"
           LIBS_UCRT="$PWD/sdk-cpp/c/ucrt/x64"
-          LIBS_VC=$(find "$PWD/vc-crt" -type d -iname x64 | while IFS= read -r d; do
-            [ -n "$(find "$d" -maxdepth 1 -iname libcmt.lib | head -n 1)" ] && echo "$d" && break
-          done)
-          # 包里的文件名是首字母大写（Ole32.Lib），Linux 上大小写敏感；ucrt 目录里没有 ole32，
-          # 只在 um 目录里校验。
-          if [ -z "$(find "$LIBS_UM" -maxdepth 1 -iname ole32.lib | head -n 1)" ]; then
-            echo "::error title=no import libraries::包里没找到 ole32.lib（$LIBS_UM）"
-            ls "$LIBS_UM" | head -n 20
-            exit 1
-          fi
-          if [ -z "$(find "$LIBS_UCRT" -maxdepth 1 -iname libucrt.lib | head -n 1)" ]; then
-            echo "::error title=no import libraries::包里没找到 libucrt.lib（$LIBS_UCRT）"
-            exit 1
-          fi
-          if [ -z "$LIBS_VC" ]; then
-            echo "::error title=no import libraries::VC 包里没找到 libcmt.lib"
-            find vc-crt -maxdepth 3 -type d | head -n 20
-            exit 1
-          fi
+          # CRT 导入库（libcmt.lib、libvcruntime.lib）：从 VC 运行库安装包里解出来。
+          wget -q https://aka.ms/vs/17/release/vc_redist.x64.exe -O vc_redist.x64.exe
+          rm -rf vc-crt && mkdir -p vc-crt
+          cabextract -q -d vc-crt vc_redist.x64.exe || true
+          LIBS_VC=$(find "$PWD/vc-crt" -type f -iname 'libcmt.lib' -printf '%h\n' | head -n 1)
+          for dir in "$LIBS_UM" "$LIBS_UCRT" "$LIBS_VC"; do
+            if [ -z "$dir" ] || [ ! -d "$dir" ]; then
+              echo "::error title=no import libraries::缺导入库目录：${dir:-空}"
+              exit 1
+            fi
+          done
           echo "SDK_CPP_LIB=$LIBS_UM;$LIBS_UCRT;$LIBS_VC" >> "$GITHUB_ENV"
-          echo "import libs: $LIBS_UM（$(ls "$LIBS_UM" | wc -l) 个）、$LIBS_UCRT、$LIBS_VC"
+          echo "import libs: $LIBS_UM、$LIBS_UCRT、$LIBS_VC"
 
       - name: Install LLVM for cross compiling
         run: |
