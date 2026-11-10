@@ -23,29 +23,6 @@ path = "src/bin/bridge-service.rs"
 name = "bluetooth-input-bridge-socket"
 path = "src/bin/socket-bridge.rs"
 
-[target.'cfg(windows)'.dependencies]
-# 宿主是 GNU 目标（Linux 上交叉打包 Windows 安装器）时，依赖树里没有 windows crate 0.62 的
-# 其它引用，所以这里显式钉住它；MSVC 目标本来就会编它，features 合并后不受影响。
-# 模块清单与 src/service/win/*.rs 里用到的保持一致（Win32::* 路径只有这份 feature 列表才有）。
-windows = { version = "0.62.2", features = [
-    "Win32_Devices_Bluetooth",
-    "Win32_Foundation",
-    "Win32_Graphics_Gdi",
-    "Win32_Networking_WinSock",
-    "Win32_Security",
-    "Win32_Security_Authorization",
-    "Win32_Storage_FileSystem",
-    "Win32_System_LibraryLoader",
-    "Win32_System_Pipes",
-    "Win32_System_Registry",
-    "Win32_System_SystemInformation",
-    "Win32_System_Threading",
-    "Win32_System_StationsAndDesktops",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_UI_Shell",
-    "Win32_UI_WindowsAndMessaging",
-] }
-
 [dependencies]
 tauri = { version = "2.12.5", features = [] }
 serde = { version = "1", features = ["derive"] }
@@ -62,12 +39,14 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-uti
 # Windows 后端：Win32 WinSock 蓝牙 RFCOMM（AF_BTH + WSASetService）+ SendInput 注入
 # + 命名管道控制通道。
 #
-# 放在所有 Windows 目标下（而不是只在 cfg(target_os = "windows") 里）：安装包是在 Linux 上
-# 交叉打包的，那一侧为了让链接器少掉 MSVC 导入库（libcmt.lib 等）改用 x86_64-pc-windows-gnu，
-# 那个目标的 target_os 同样是 "windows"。
+# 用 cfg(windows) 而不是 cfg(target_os = "windows")：安装包是在 Linux 上用 GNU 目标
+# （x86_64-pc-windows-gnu）交叉打包的——MSVC 目标要 libcmt.lib 等只在 Visual Studio 里有的
+# 导入库，Linux 上凑不齐——而 GNU 目标的 target_os 同样是 "windows"。
 [target.'cfg(windows)'.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
 windows-future = "0.3.2"
+# 模块清单与 src/service/win/*.rs 里用到的 Win32 路径保持一致。
+# MSVC 目标本来也会通过 tauri 的依赖拉进这个 crate，两份 feature 列表在 cargo 里会合并。
 windows = { version = "0.62.2", features = [
     "Foundation",
     "Win32_Devices_Bluetooth",
