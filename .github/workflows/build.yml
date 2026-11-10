@@ -287,28 +287,6 @@ jobs:
         with:
           workspaces: desktop/src-tauri -> target
 
-      # NSIS 不在 runner 的默认镜像里，而 tauri-cli 找不到 makensis 时会去 GitHub 下载
-      # 一个自带工具链（需要出网）。这里显式装一份，并把它放进 PATH，打包就完全离线。
-      # 注意 chocolatey 装出来的是 C:\Program Files (x86)\NSIS，64 位路径上并不存在。
-      - name: Install NSIS
-        shell: pwsh
-        run: |
-          $candidates = @(
-            'C:\Program Files (x86)\NSIS',
-            'C:\Program Files\NSIS',
-            "$env:LOCALAPPDATA\tauri\NSIS"
-          ) | Where-Object { Test-Path (Join-Path $_ 'makensis.exe') }
-          if (-not $candidates) {
-            choco install nsis --no-progress -y
-            $candidates = @('C:\Program Files (x86)\NSIS', 'C:\Program Files\NSIS') |
-              Where-Object { Test-Path (Join-Path $_ 'makensis.exe') }
-          }
-          if (-not $candidates) {
-            throw '没有找到 makensis.exe'
-          }
-          $candidates[0] | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-          & (Join-Path $candidates[0] 'makensis.exe') /VERSION
-
       # 安装包由 tauri CLI 负责打包；界面二进制仍由下面的 cargo build 产出，
       # tauri 打包时不会重新编译 Rust，只把它和图标、钩子脚本一起塞进 NSIS。
       # 用 install-action 而不是 `cargo install tauri-cli`：前者直接下载预编译的官方二进制，
@@ -323,6 +301,28 @@ jobs:
 
       - name: Run unit tests
         run: cargo test --locked --lib --manifest-path src-tauri/Cargo.toml
+
+      # NSIS 不在 runner 的默认镜像里，而 tauri-cli 找不到 makensis 时会去 GitHub 下载
+      # 一个自带工具链（需要出网）。放在编译与测试之后，是因为它们占了大头时间：
+      # 宁可在省下缓存与测试之后装 NSIS 失败，也不要把前面几步一起拖进“跳过”。
+      # chocolatey 装出来的是 C:\Program Files (x86)\NSIS，64 位路径上并不存在。
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          $dirs = @(
+            (Join-Path $env:ProgramFiles 'NSIS'),
+            (Join-Path ${env:ProgramFiles(x86)} 'NSIS'),
+            (Join-Path $env:LOCALAPPDATA 'tauri\NSIS')
+          ) | Where-Object { Test-Path (Join-Path $_ 'makensis.exe') }
+          if ($dirs.Count -eq 0) {
+            choco install nsis --no-progress -y
+            $dirs = @(Join-Path ${env:ProgramFiles(x86)} 'NSIS')
+          }
+          if ($dirs.Count -eq 0 -or -not (Test-Path (Join-Path $dirs[0] 'makensis.exe'))) {
+            throw '没有找到 makensis.exe'
+          }
+          $dirs[0] | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          & (Join-Path $dirs[0] 'makensis.exe') /VERSION
 
       # 用 bundle 子命令而不是 build：build 会自己再跑一遍 cargo（前面的缓存和测试白费），
       # bundle 只打包“已经构建好的”release 二进制，这正是我们上一步的产物。
