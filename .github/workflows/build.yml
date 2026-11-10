@@ -253,6 +253,23 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.2.0.${GITHUB_RUN_NUMBER}"
           bash packaging/deb/build.sh "$VERSION" amd64 "$PWD/dist"
+      - name: Build Windows installer
+        run: cargo tauri bundle --bundles nsis --ci --target x86_64-pc-windows-msvc
+
+      - name: Collect Windows installer
+        run: |
+          mkdir -p dist
+          src=$(ls src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe)
+          cp "$src" "dist/bluetooth-input-bridge-${GITHUB_REF_NAME#v}-windows-x64-setup.exe"
+          ls -l dist
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows-installer
+          path: desktop/dist/*.exe
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload .deb
         uses: actions/upload-artifact@v4
@@ -306,10 +323,6 @@ jobs:
     defaults:
       run:
         working-directory: desktop
-        # 别用默认的 bash：windows-latest 上的 bash 是 Git Bash，里面没有 node.exe，
-        # tauri CLI 探测 NSIS 时会跑 `node --version`，找不到就整步失败（退出码 1、0 秒结束）。
-        # 默认是 pwsh，想在测试脚本里开调试就在该步骤自己写 `shell: pwsh` + `$DebugPreference`。
-        shell: pwsh
     steps:
       - name: Check out
         uses: actions/checkout@v4
@@ -322,29 +335,7 @@ jobs:
         with:
           workspaces: desktop/src-tauri -> target
 
-      # `%LOCALAPPDATA%\tauri\NSIS` 里的插件哈希与 bundler 期望值对不上（缓存残缺、
-      # 或某次下载被网络打断）时，tauri 会现场重新下载 nsis_tauri_utils.dll；这一步
-      # 在 runner 上经常卡到超时，整包直接失败（本机复现：Error failed to bundle
-      # project `timeout: global`）。打包前先校验，坏掉就把插件目录整个清掉重建。
-      - name: Check NSIS plugin cache
-        shell: pwsh
-        run: |
-          $root = Join-Path $env:LOCALAPPDATA 'tauri/NSIS'
-          $plugin = Join-Path $root 'Plugins/x86-unicode/additional/nsis_tauri_utils.dll'
-          if (Test-Path $plugin) {
-            $actual = (Get-FileHash $plugin -Algorithm SHA1).Hash
-            if ($actual -ne '75197FEE3C6A814FE035788D1C34EAD39349B860') {
-              Write-Output "NSIS 插件哈希不符（$actual），清掉缓存让 tauri 重新下载"
-              Remove-Item -Recurse -Force (Join-Path $root 'Plugins')
-            } else {
-              Write-Output 'NSIS 插件缓存正常'
-            }
-          }
-
-      # 安装包由 tauri CLI 负责打包；界面二进制仍由下面的 cargo build 产出，
-      # tauri 打包时不会重新编译 Rust，只把它和图标、钩子脚本一起塞进 NSIS。
-      # 用 install-action 而不是 `cargo install tauri-cli`：前者直接下载预编译的官方二进制，
-      # 后者要现场编译上百个依赖、好几分钟。
+      # 安装包（NSIS）改在 linux 的 Debian 作业里打，Windows 这里只负责编译与自检。
       - name: Set up Tauri CLI
         uses: taiki-e/install-action@v2
         with:
@@ -392,104 +383,6 @@ jobs:
           path: ${{ runner.temp }}/unit-tests.log
           if-no-files-found: ignore
           retention-days: 7
-
-      # NSIS 不在 runner 的默认镜像里，而 tauri-cli 找不到 makensis 时会去 GitHub 下载
-      # 一个自带工具链（需要出网）。放在编译与测试之后，是因为它们占了大头时间：
-      # 宁可在省下缓存与测试之后装 NSIS 失败，也不要把前面几步一起拖进“跳过”。
-      # chocolatey 装出来的是 C:\Program Files (x86)\NSIS，64 位路径上并不存在。
-      - name: Install NSIS
-        shell: pwsh
-        run: |
-          $dirs = @(
-            (Join-Path $env:ProgramFiles 'NSIS'),
-            (Join-Path ${env:ProgramFiles(x86)} 'NSIS'),
-            (Join-Path $env:LOCALAPPDATA 'tauri\NSIS')
-          ) | Where-Object { Test-Path (Join-Path $_ 'makensis.exe') }
-          if ($dirs.Count -eq 0) {
-            choco install nsis --no-progress -y
-            $dirs = @(Join-Path ${env:ProgramFiles(x86)} 'NSIS')
-          }
-          if ($dirs.Count -eq 0 -or -not (Test-Path (Join-Path $dirs[0] 'makensis.exe'))) {
-            throw '没有找到 makensis.exe'
-          }
-          $dirs[0] | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-          & (Join-Path $dirs[0] 'makensis.exe') /VERSION
-
-      # 用 bundle 子命令而不是 build：build 会自己再跑一遍 cargo（前面的缓存和测试白费），
-      # bundle 只打包“已经构建好的”release 二进制，这正是我们上一步的产物。
-      # 前端的静态文件由 src-tauri/build.rs 复制到 generated-dist 并写入
-      # TAURI_ENV_FRONTEND_DIST，所以不需要 beforeBuildCommand，也不需要额外的前端工具链。
-      # 产物：src-tauri/target/release/bundle/nsis/*_<版本>_x64-setup.exe
-      # 安装向导含“安装模式”“目录选择”两页，用户可以自己选安装（解压）位置。
-      - name: Build installer
-        id: bundle
-        run: |
-          # Windows 上这一步用 pwsh 跑（见作业级别的 defaults.run.shell），
-          # 不要在这里写 bash 语法。退出码交给下一步判断。
-          $env:RUST_BACKTRACE = '1'
-          $ErrorActionPreference = 'Continue'
-          cargo tauri bundle --bundles nsis --ci 2>&1 |
-            Tee-Object -FilePath ../tauri-nsis.log
-          if ($LASTEXITCODE -ne 0) {
-            Write-Output "cargo tauri bundle 退出码：$LASTEXITCODE"
-            exit $LASTEXITCODE
-          }
-
-      - name: Verify installer output
-        if: always()
-        env:
-          # 上一步的退出码走表达式传进来：`if: always()` 的步骤里拿不到
-          # `$LASTEXITCODE`（那只是本 pwsh 进程自己的），也不能写成
-          # `$env:TAURI_BUNDLE_EXIT`（根本没有这个变量，读出来永远是 $null）。
-          BUNDLE_EXIT: ${{ steps.bundle.outcome == 'success' && '0' || '1' }}
-        shell: pwsh
-        run: |
-          $log = '../tauri-nsis.log'
-          if (Test-Path $log) {
-            # 打包日志整段进注解：失败时 Checks 页面/`gh run view` 就能看到
-            # 「Error failed to bundle project ...」，不用去后台翻 job 日志。
-            Get-Content $log | Select-Object -Last 40 | ForEach-Object {
-              $text = $_.Trim()
-              if ($text.Length -gt 900) { $text = $text.Substring(0, 900) }
-              if ($text) { Write-Output "::warning title=tauri bundle::$text" }
-            }
-          }
-          # 打包失败时这一步也会跑（if: always()），这里把失败原样带出来。
-          $code = [int]$env:BUNDLE_EXIT
-          if ($code -ne 0) {
-            throw "cargo tauri bundle 失败（退出码 $code），见上面的 tauri bundle 注解"
-          }
-          $setup = Get-ChildItem 'src-tauri/target/release/bundle/nsis/*.exe'
-          if (-not $setup) {
-            throw '没有生成 NSIS 安装包'
-          }
-          foreach ($file in $setup) {
-            "{0}  {1:N0} 字节" -f $file.Name, $file.Length
-          }
-          # 复制一份带平台后缀的名字，Release 里好区分
-          $suffix = ($env:GITHUB_REF_NAME -replace '/', '-')
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item $setup[0].FullName "dist/bluetooth-input-bridge-${suffix}-windows-x64-setup.exe"
-
-      - name: Upload binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-windows
-          path: |
-            desktop/src-tauri/target/release/bluetooth-input-desktop.exe
-            desktop/src-tauri/target/release/bluetooth-input-bridge-service.exe
-            desktop/src-tauri/target/release/bluetooth-input-bridge-socket.exe
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload installer
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-windows-installer
-          path: desktop/dist/*.exe
-          if-no-files-found: error
-          retention-days: 30
-
   release:
     name: Release
     # 永远跑：Windows 安装包那一步挂掉也不该把 apk、Linux 包、LÖVE 包一起扣下。
