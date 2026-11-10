@@ -299,8 +299,35 @@ jobs:
       - name: Build binaries
         run: cargo build --locked --release --manifest-path src-tauri/Cargo.toml --bins
 
+      # 单独一步构建测试（等价于 cargo test --no-run），下面直接跑产出的可执行文件：
+      # cargo test 会把失败详情写进组日志，注解里看不到。
+      - name: Build unit tests
+        run: cargo test --locked --no-run --manifest-path src-tauri/Cargo.toml --lib
+
+      # 失败用例逐个输出成工作流注解：默认的 job 日志要管理员权限才拉得到，
+      # 而失败详情只出现在组日志里时，注解里就只剩一句 "exit code 1"。
+      # 顺带把休眠不唤醒的问题暴露出来——并行跑到一半卡死，只会看到超时。
       - name: Run unit tests
-        run: cargo test --locked --lib --manifest-path src-tauri/Cargo.toml
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'unit-tests.log'
+          $exe = (Get-ChildItem -Recurse -Path 'src-tauri/target/debug/deps' -Filter '*.exe' |
+            Where-Object { $_.BaseName -like 'bluetooth_input_desktop_lib-*' -and $_.BaseName -ne 'bluetooth_input_desktop_lib' } |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1)
+          if (-not $exe) { throw '没有找到测试可执行文件（先跑 cargo test --no-run）' }
+          & $exe.FullName --test-threads=1 2>&1 | Tee-Object -FilePath $log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Get-Content $log |
+              Where-Object { $_ -match 'FAILED' -or $_ -match '^test result:' } |
+              Select-Object -First 20 |
+              ForEach-Object {
+                $text = $_.Trim()
+                if ($text.Length -gt 600) { $text = $text.Substring(0, 600) }
+                Write-Output "::error title=unit-tests failed::$text"
+              }
+          }
+          exit $code
 
       # NSIS 不在 runner 的默认镜像里，而 tauri-cli 找不到 makensis 时会去 GitHub 下载
       # 一个自带工具链（需要出网）。放在编译与测试之后，是因为它们占了大头时间：
