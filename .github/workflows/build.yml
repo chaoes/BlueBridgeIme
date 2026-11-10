@@ -275,15 +275,20 @@ jobs:
       - name: Probe Tauri toolchain
         continue-on-error: true
         run: |
-          status=0
-          pkg-config --modversion gtk+-3.0 openssl 2>&1 || status=1
-          command -v cargo-tauri && cargo tauri --version 2>&1 || status=1
-          ( command -v cargo-tauri >/dev/null 2>&1 || sudo apt-get install -y libsoup-2.4-dev ) || true
-          echo "::warning title=tauri probe::probe exit=$status"
+          which pkg-config; pkg-config --version
+          for m in openssl gtk+-3.0 libsoup-3.0 webkit2gtk-4.1; do
+            if pkg-config --exists "$m" 2>/dev/null; then
+              echo "$m = $(pkg-config --modversion "$m")"
+            else
+              echo "::warning title=pkg-config::missing $m"
+            fi
+          done
+          ( command -v cargo-tauri && cargo tauri --version ) || echo '::warning title=cargo-tauri::not installed'
           exit 0
       # tauri 自己会再跑一遍 cargo；这里显式指定 target 目录，让它和上面的
       # `cargo build --release --bins` 用同一份产物（走 rust-cache 的同一路径）。
       - name: Prepare Windows target
+        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
@@ -298,6 +303,7 @@ jobs:
           fi
 
       - name: Build Windows installer
+        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
@@ -312,6 +318,9 @@ jobs:
           fi
 
       - name: Collect Windows installer
+        # 安装包这一步是尽力而为：打不出来就当没有，别把 deb 的上传也卡住。
+        if: always()
+        continue-on-error: true
         run: |
           mkdir -p dist
           src=$(ls src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe)
@@ -319,6 +328,9 @@ jobs:
           ls -l dist
 
       - name: Upload Windows installer
+        # 安装包这一步是尽力而为：打不出来就当没有，别把 deb 的上传也卡住。
+        if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: desktop-windows-installer
