@@ -80,6 +80,8 @@ pub enum FocusError {
     SelfTarget,
     /// 前台进程已提权而本程序未提权，SendInput 会被 UIPI 静默丢弃。
     ElevatedTarget,
+    /// 本程序自己以管理员身份运行，而目标窗口是普通权限：UIPI 同样会丢掉键事件。
+    ElevatedSelf,
     /// 处于锁屏/UAC 等安全桌面，输入到不了用户界面。
     SecureDesktop,
     /// 前台窗口已最小化。
@@ -104,6 +106,9 @@ impl FocusError {
             }
             FocusError::ElevatedTarget => {
                 "目标窗口权限较高，请以普通权限运行本程序（不要提权）或切换到普通窗口"
+            }
+            FocusError::ElevatedSelf => {
+                "本程序以管理员身份运行，输入到不了普通权限的窗口，请用普通权限重新启动"
             }
             FocusError::SecureDesktop => "系统正在锁定或显示安全桌面，解锁后重试",
             FocusError::Minimized => "目标窗口已最小化，请恢复窗口后重试",
@@ -452,16 +457,46 @@ pub fn process_elevated(pid: u32) -> Option<bool> {
 /// 保守判据：目标已提权而我们未提权 → 阻止。查不到目标权限时放行，交给
 /// SendInput 的真实返回值判定，避免因查询失败误拒正常窗口。
 pub fn elevation_blocked(target_pid: u32) -> bool {
-    if target_pid == current_pid() {
-        return false;
-    }
     matches!(
-        (
-            process_elevated(target_pid),
-            process_elevated(current_pid())
-        ),
-        (Some(true), Some(false))
+        elevation_relation(target_pid),
+        ElevationRelation::TargetHigher
     )
+}
+
+/// 目标进程与我们的提权关系。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ElevationRelation {
+    /// 目标更高：SendInput 会被 UIPI 丢掉。
+    TargetHigher,
+    /// 同级（都提权或都不提权）。
+    SameLevel,
+    /// 我们更高：往低权限窗口注入是允许的。
+    SelfHigher,
+    /// 查不到目标（或自己的）令牌：不拒绝，交给 SendInput 的真实结果判定。
+    Unknown,
+}
+
+/// 由“目标提权位 + 我们的提权位”推出关系（纯逻辑，单测可直接喂任意组合）。
+fn elevation_relation_of(target: Option<bool>, ours: Option<bool>) -> ElevationRelation {
+    match (target, ours) {
+        (Some(true), Some(false)) => ElevationRelation::TargetHigher,
+        (Some(a), Some(b)) if a == b => ElevationRelation::SameLevel,
+        (Some(false), Some(true)) => ElevationRelation::SelfHigher,
+        _ => ElevationRelation::Unknown,
+    }
+}
+
+/// 判定提权关系（[`elevation_blocked`] 的可枚举版）。
+pub fn elevation_relation(target_pid: u32) -> ElevationRelation {
+    let our_elevation = process_elevated(current_pid());
+    if target_pid == current_pid() {
+        return match our_elevation {
+            // 自己比自己永远“同级”。
+            Some(_) => ElevationRelation::SameLevel,
+            None => ElevationRelation::Unknown,
+        };
+    }
+    elevation_relation_of(process_elevated(target_pid), our_elevation)
 }
 
 /// 当前进程 ID。
@@ -621,6 +656,12 @@ pub fn check_snapshot(snap: &FocusSnapshot) -> Result<(), FocusError> {
     }
     if live && elevation_blocked(snap.pid) {
         return Err(FocusError::ElevatedTarget);
+    }
+    // 我们自己是提权的：目标只要不是同级（普通权限窗口就是“更低一级”），UIPI 就会
+    // 把 SendInput 的键事件静默丢掉——用户看到的是“回执成功、字却没进去”。
+    // 这里明确拒绝并给出“别以管理员身份运行”的提示，而不是让它装作成功。
+    if elevation_relation(snap.pid) == ElevationRelation::SelfHigher {
+        return Err(FocusError::ElevatedSelf);
     }
     if foreground_shared_with_us(snap) && !relaxed {
         return Err(FocusError::SelfTarget);
@@ -833,7 +874,54 @@ mod tests {
     #[test]
     fn elevation_of_self_is_not_blocking() {
         assert!(!elevation_blocked(current_pid()));
-        assert_eq!(process_elevated(current_pid()), Some(false));
+        // 自己永远不比“自己”高权限。
+        assert_ne!(
+            elevation_relation(current_pid()),
+            ElevationRelation::TargetHigher
+        );
+        // 不能断言 process_elevated(current_pid()) == Some(false)：这一条只在“测试进程
+        // 没提权”时成立，而 GitHub 的 windows-latest 上 runner 是管理员，cargo test
+        // 出来的进程也带提权令牌，那里它是 Some(true)——v0.2.0 的 Windows 作业正是
+        // 卡在这个断言上（`elevation_of_self_is_not_blocking ... FAILED`）。
+        // 只要求“要么查不到，要么查得到且与自身一致”。
+        if let Some(elevated) = process_elevated(current_pid()) {
+            assert_eq!(
+                elevation_relation(current_pid()),
+                ElevationRelation::SameLevel,
+                "{}",
+                elevated
+            );
+        }
+    }
+
+    #[test]
+    fn elevation_relation_covers_every_polarity() {
+        // 纯关系表：拦截只由 TargetHigher 触发；我们不比目标高时也不能误拦。
+        assert_eq!(
+            elevation_relation_of(Some(true), Some(false)),
+            ElevationRelation::TargetHigher
+        );
+        assert_eq!(
+            elevation_relation_of(Some(true), Some(true)),
+            ElevationRelation::SameLevel
+        );
+        assert_eq!(
+            elevation_relation_of(Some(false), Some(false)),
+            ElevationRelation::SameLevel
+        );
+        assert_eq!(
+            elevation_relation_of(Some(false), Some(true)),
+            ElevationRelation::SelfHigher
+        );
+        // 查不到令牌一律 Unknown，放行交给 SendInput 的真实结果。
+        assert_eq!(
+            elevation_relation_of(None, Some(false)),
+            ElevationRelation::Unknown
+        );
+        assert_eq!(
+            elevation_relation_of(Some(true), None),
+            ElevationRelation::Unknown
+        );
     }
 
     #[test]
