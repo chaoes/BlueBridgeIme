@@ -57,8 +57,9 @@ Windows 下蓝牙走 Win32 蓝牙 Winsock（`AF_BTH` + `WSASetService`），文�
 
 不想自己编译的话，用 Release 页或 CI 产物里的安装包 `bluetooth-input-bridge-<版本>-windows-x64-setup.exe`：
 
-1. 双击运行。安装向导依次是：欢迎 → 许可 → **安装模式**（仅为我安装，不需要管理员权限；或为所有用户安装，会弹 UAC）→ **目录选择页**（可以点「浏览」把程序装到你想要的位置）→ 开始菜单文件夹 → 安装 → 完成页（可勾选「创建桌面快捷方式」「安装后启动」）。
+1. 双击运行。安装向导依次是：欢迎 → 许可 → **安装模式**（仅为我安装，不需要管理员权限；或为所有用户安装，会弹 UAC）→ **目录选择页**（可以点「浏览」把程序装到你想要的位置）→ 开始菜单文件夹 → 安装 → 完成页（可勾选「创建桌面快捷方式」「安装后启动」）。目录页不会再因为走了 `/P`（被动）或 `/UPDATE` 分支而跳过；无人值守安装用 `setup.exe /S /D=D:\你的路径`。
 2. 向导默认语言跟随系统，也可以在启动时选择中文 / English。
+3. 界面是 Tauri 窗口，**不带控制台**（`src/main.rs` 的 `windows_subsystem = "windows"`）；旁边的服务 exe 是控制台程序，方便直接看日志。
 3. 卸载走「应用和功能」或开始菜单里的 Uninstall；安装目录会被整体删除，日志与配置在 `%APPDATA%\bluebridge-ime`，会保留下来（重装可沿用，想彻底清掉手动删这个目录即可）。
 4. 安装包本身没有代码签名，Windows 可能提示「未知发布者」，选择「更多信息 → 仍要运行」即可。
 
@@ -80,12 +81,13 @@ Windows 后端的实现说明见 [docs/windows.md](docs/windows.md)。
 
 ## 界面
 
-- 状态卡显示服务状态、当前设备的**设备名与 MAC**（设备名经 BlueZ `Device1.Alias`/`Name` 解析，失败时回退为 MAC）。
-- **服务注册**开关：即时 `RegisterProfile` / `UnregisterProfile`，控制手机能否发现本机；选择持久化在 `~/.config/bluetooth-input-bridge/service.json`。
-- **开机自启**开关：写入并启用/停用 `~/.config/systemd/user/bluetooth-input-bridge.service`（`WantedBy=graphical-session.target`，`ExecStart` 指向当前服务二进制）。重新构建或移动二进制后，重新切换一次开关即可刷新路径。
+- 状态卡显示服务状态、当前设备的**设备名与 MAC**（Linux 经 BlueZ `Device1.Alias`/`Name` 解析，Windows 经 `BluetoothGetDeviceInfo`；失败时回退为 MAC）。
+- **服务注册**开关：控制手机能否发现本机（Linux 即时 `RegisterProfile` / `UnregisterProfile`；Windows 是 `WSASetService` 登记/删除 SDP 记录）；选择持久化在 `service.json`（Linux `~/.config/bluetooth-input-bridge/`，Windows `%APPDATA%\bluebridge-ime\`）。
+- **开机自启**开关：Linux 写入并启用/停用 `~/.config/systemd/user/bluetooth-input-bridge.service`（`WantedBy=graphical-session.target`，`ExecStart` 指向当前服务二进制）；Windows 写 `HKCU\...\CurrentVersion\Run` 的 `BluetoothInputBridge` 值。重新构建或移动二进制后，重新切换一次开关即可刷新路径。
 - **01 软件指引与介绍**：三步说明与「允许配对 3 分钟」。
 - **02 测试输入框**：一个本地纯文本输入框，用来试打字、确认键盘与输入法正常；内容只留在窗口内，不发送、不改动剪贴板。
 - **界面语言**：跟随操作系统区域设置（Linux 依次读取 `LANGUAGE`/`LC_ALL`/`LC_MESSAGES`/`LANG`，其他平台由 `sys-locale` 提供），支持中文、英文、俄语、日语、韩语；未匹配到这些语言时回退英文。前端字典在 `web/main.js`，服务层返回的错误文本目前仍是中文，会原样显示。
+- **平台相关文案由后端给出**：标题栏徽标（Windows 显示 `Windows 10/11`，Linux 显示 `GNOME · Wayland`）、「服务注册」下面的说明、「配对失败去哪里开」都来自 `src/lib.rs` 的 `get_platform` 命令，前端只按返回的 i18n 键查表——各平台 webview 都是同一个 Chromium 内核，前端自己猜不出系统。
 - 窗口默认 900×650、最小 720×560，所有内容在一屏内显示，无需滚动。
 
 ## 配对

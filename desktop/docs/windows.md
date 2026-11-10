@@ -20,6 +20,8 @@ desktop/src-tauri/src/
 
 **服务与界面分离**：`bluetooth-input-bridge-service.exe` 可以完全无界面运行，界面只是命名管道客户端。关闭界面不会断开已建立的蓝牙会话。
 
+**平台文案由后端提供**：webview 在 Windows 与 Linux 上都是 Chromium 内核，前端靠 User-Agent 分不出系统。所以 `src/lib.rs` 有一个 `get_platform` 命令，返回 `{os, label, registrationNoteKey, pairingHintKey}`——标题栏徽标（Windows 是 `Windows 10/11`，Linux 是 `GNOME · Wayland`）、「服务注册」下面那句「登记到哪个蓝牙服务」、配对失败时提示去哪个设置页，全部按这个返回值查 `web/main.js` 里的 i18n 键，新增平台只在 `get_platform` 里加一个 `cfg` 分支即可。
+
 ## 蓝牙：为什么不是 WinRT
 
 最初按 `PROTOCOL.md` 里给的 WinRT 方案（`RfcommServiceProvider.CreateAsync` + `StreamSocketListener.BindServiceNameAsync` + `StartAdvertising`）实现，在本机实测走不通：
@@ -151,7 +153,8 @@ CI 的 `windows` 作业会额外用 `cargo tauri bundle --bundles nsis --ci` 产
 
 要点：
 
-- **可自定义安装位置**：标准 `MUI_PAGE_DIRECTORY` 页面会出现在安装模式之后，点「浏览」即可改目录；`installMode: "both"` 还让用户在「仅为我安装」（无 UAC、装到 `%LOCALAPPDATA%`）/「所有用户」（需要 UAC、装到 `Program Files`）之间选。
+- **可自定义安装位置**：标准 `MUI_PAGE_DIRECTORY` 页面会出现在安装模式之后，点「浏览」即可改目录；`installMode: "both"` 还让用户在「仅为我安装」（无 UAC、装到 `%LOCALAPPDATA%`）/「所有用户」（需要 UAC、装到 `Program Files`）之间选。该页的 `MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive` 由补丁去掉，所以 `/P`、`/UPDATE` 分支下也会显示目录页；静默安装 `/S` 本来就不显示任何页面，用 `/D=路径` 指定目录。
+- **界面是 GUI 子系统、没有控制台窗口**：`src/main.rs` 里有 `#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]`。Tauri v2 不再自动加这个属性（v1 的模板自带），漏了它双击 exe 会附带一个黑色控制台窗口；可以看 PE 头的 `Subsystem` 字段（2 = WINDOWS，3 = CONSOLE）确认。无界面服务 `bluetooth-input-bridge-service.exe` 反过来必须留在 CONSOLE 子系统，日志才打得出来。
 - **安装包是 perMachine、RequireAdministrator 清单**：tauri 的 bundler 会写一份
   “elevated”应用清单交给 `tauri-build`，这样 NSIS 的提权检测不会误判为绕过。
 - **目录页文案与语言选择框由 `build.rs` 定制**：tauri 的模板里这两处是固定的，而 `MUI_DIRECTORYPAGE_TEXT_*`、`MUI_LANGDLL_ALWAYSSHOW` 都是“立即生效”的宏，必须在 `!insertmacro MUI_PAGE_DIRECTORY` / `.onInit` 之前出现，事后用 `--define` 补不进去。所以 `build.rs` 在本地 cargo registry 里找 `tauri-bundler` 的 `installer.nsi`，按 `gen/nsis/directory-page.patch.nsi`、`gen/nsis/language-selector.patch.nsi`（`=== ANCHOR ===` / `=== REPLACE ===` 两段）做**文本替换**，结果写到 `src-tauri/generated-nsis/installer.nsi`（生成的，已 gitignore），再由 `template` 字段引用。模板升级导致锚点对不上时，`build.rs` 打印警告并跳过该定制，构建不会失败。
