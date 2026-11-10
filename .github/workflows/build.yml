@@ -349,20 +349,6 @@ jobs:
             exit "$status"
           fi
 
-      # 交叉打 NSIS 包报错时只给一句 “No such file or directory”，看不出缺哪个文件：
-      # 打之前先把资源目录整体复制进 bundle 目录，再把目标目录里到底有什么打出来。
-      - name: Diagnose bundle inputs
-        if: always()
-        run: |
-          set -x
-          pwd
-          ls -la ..
-          ls -la ../web 2>&1 | head -n 20
-          ls -la src-tauri/target/x86_64-pc-windows-gnu/release/ 2>&1 | head -n 40
-          find src-tauri/target/x86_64-pc-windows-gnu/release -maxdepth 2 -name '*.ico' 2>/dev/null
-          mkdir -p src-tauri/target/x86_64-pc-windows-gnu/release/bundle
-          cp -r "$PWD/.." "src-tauri/target/x86_64-pc-windows-gnu/release/bundle/resources" || true
-
       - name: Upload bundle log
         if: always()
         uses: actions/upload-artifact@v4

@@ -22,6 +22,9 @@ const NSIS_PATCHES: [&str; 2] = [
 ];
 const NSIS_TEMPLATE: &str = "generated-nsis/installer.nsi";
 
+/// 打包时 tauri 需要读、但归属清单里没有的目录（相对 src-tauri）。
+const BUNDLE_INPUT_DIRS: [&str; 2] = ["icons", "gen"];
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={FRONTEND_DIST}");
@@ -30,6 +33,7 @@ fn main() {
     }
 
     patch_nsis();
+    stage_bundle_inputs();
 
     // An explicit value comes from the Tauri CLI (`tauri build` / `tauri bundle`), which
     // runs its own frontend copy step; leaving it untouched keeps that path working.
@@ -51,6 +55,51 @@ fn main() {
     unsafe { env::set_var("TAURI_ENV_FRONTEND_DIST", "../../generated-dist") };
 
     tauri_build::build();
+}
+
+/// 把 tauri.conf.json 引用、但不在归属清单里的资源文件复制到
+/// `$CARGO_TARGET_DIR/bundle/resources/` 下，让 `cargo tauri bundle` 能找到它们。
+///
+/// 为什么需要：`tauri bundle` 会先 `set_current_dir(tauri_dir)`（即 desktop/src-tauri），
+/// 再把 `tauri.conf.json` 里的相对路径按 **执行 cargo 时的工作目录** 解析——从 desktop/ 下调用时
+/// `icons/icon.ico` 指的是 desktop/icons/icon.ico（不存在，文件在 src-tauri/icons/ 下），
+/// 于是只报一句 “No such file or directory (os error 2)”。CI 在 Linux 上交叉打 NSIS 包正是这种情况
+/// （Windows 上由 tauri-cli 自己的流程兜住了）。
+///
+/// tauri 打包时把资源收集到 `<target>/bundle/resources/`，相对路径逐段拼在它后面读取；
+/// 这里按同样的方式提前放好，打包一侧就能直接读到。
+///
+/// 目录以当前仓库布局为准：tauri.conf.json 与它引用的 `icons/`、`gen/` 同在 src-tauri 下，
+/// 所以这里直接用清单头目录里的这两个目录。
+fn stage_bundle_inputs() {
+    let Ok(target_dir) = env::var("CARGO_TARGET_DIR") else {
+        return;
+    };
+    if target_dir.is_empty() {
+        return;
+    }
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
+    let manifest_dir = Path::new(&manifest_dir);
+    let staging = if Path::new(&target_dir).is_absolute() {
+        Path::new(&target_dir).join("bundle").join("resources")
+    } else {
+        // cargo 把相对路径的 CARGO_TARGET_DIR 当作相对于调用时的工作目录。
+        env::current_dir()
+            .unwrap_or_default()
+            .join(&target_dir)
+            .join("bundle")
+            .join("resources")
+    };
+
+    for entry in BUNDLE_INPUT_DIRS {
+        let source = manifest_dir.join(entry);
+        if !source.is_dir() {
+            continue;
+        }
+        if let Err(error) = copy_frontend(&source, &staging.join(entry)) {
+            eprintln!("复制打包输入 {entry} 失败：{error}");
+        }
+    }
 }
 
 /// 生成自定义的 NSIS 模板。
