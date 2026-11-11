@@ -375,13 +375,16 @@ jobs:
           cp -r "$crt_lib" "$SDK_ROOT/crt/"
           cp -r "$crt_inc" "$SDK_ROOT/crt/"
           # rust-lld 只认放着 *.lib 的那一级：SDK 的 um/x64、ucrt/x64、CRT 的 x64 分别交给它。
-          SDK_UM="$SDK_ROOT/sdk/developers/Lib/x64/um/x64"
-          SDK_UCRT="$SDK_ROOT/sdk/developers/Lib/x64/ucrt/x64"
-          SDK_CRT="$SDK_ROOT/crt/lib/x64"
+          # 导入库的位置因 SDK 版本而异（10.0.26xxx 下 um/x64 有时候会被摊平），这里按目录名和
+          # 文件名反查 kernel32.lib 所在的目录，找不到就把目录树打进注解里。
+          SDK_UM=$(dirname "$(find "$SDK_ROOT" -iname 'kernel32.lib' | head -n 1)" 2>/dev/null || true)
+          SDK_UCRT=$(dirname "$(find "$SDK_ROOT" -iname 'libucrt.lib' | head -n 1)" 2>/dev/null || true)
+          SDK_CRT=$(dirname "$(find "$SDK_ROOT" -iname 'libcmt.lib' | head -n 1)" 2>/dev/null || true)
           for d in "$SDK_UM" "$SDK_UCRT" "$SDK_CRT"; do
-            if [ -z "$(ls "$d"/*.lib 2>/dev/null)" ]; then
-              echo "::error title=Windows SDK::缺少导入库 $d"
-              ls "$SDK_ROOT/sdk/developers/Lib/x64" 2>/dev/null | head -n 20
+            if [ ! -d "$d" ]; then
+              echo "::error title=Windows SDK::找不到导入库（kernel32.lib / libucrt.lib / libcmt.lib）"
+              find "$SDK_ROOT" -maxdepth 6 -type d | sed 's/^/   /' | head -n 40 | while read -r l; do echo "::error title=Windows SDK tree::$l"; done
+              7z l "$SDK_ROOT/sdk-libs-x64.msi" | tail -n 40 | while read -r l; do echo "::error title=libs msi::$l"; done
               exit 1
             fi
           done
@@ -389,7 +392,7 @@ jobs:
           find "$SDK_ROOT" -type f -iname '*.lib' -exec sh -c 'lower=$(echo "$1" | tr "[:upper:]" "[:lower:]"); [ "$1" = "$lower" ] || mv "$1" "$lower"' _ {} \;
           SDK_FLAGS="-L native=$SDK_UM -L native=$SDK_UCRT -L native=$SDK_CRT"
           export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS="$SDK_FLAGS"
-          # tauri / cc-rs 下的 C 代码（网卡、图标资源等）也要找到 SDK 头。
+          # tauri / cc-rs 下的 C 代码（图标资源等）也要找到 SDK 头。
           export INCLUDE="$SDK_ROOT/sdk/developers/Include/x86;$SDK_ROOT/sdk/developers/Include/um;$SDK_ROOT/sdk/developers/Include/ucrt;$SDK_ROOT/sdk/developers/Include/shared;$SDK_ROOT/sdk/developers/Include/winrt;$SDK_ROOT/crt/include"
           echo "rustflags: $SDK_FLAGS"
           # rust-lld 读取的是 MSVC 风格 /LIBPATH:，用 `-L native=` 交给 rustc 拼出来即可。
