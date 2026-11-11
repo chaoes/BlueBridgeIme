@@ -202,7 +202,7 @@ jobs:
       - name: Package LÖVE builds
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.2.0.${GITHUB_RUN_NUMBER}"
+          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.2.1.${GITHUB_RUN_NUMBER}"
           chmod +x package.sh
           ./package.sh "$VERSION" dist dist/service/bluetooth-input-bridge-service dist/win
           rm -rf dist/service dist/win
@@ -272,9 +272,9 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          # 交叉打 Windows 安装包需要 Windows 目标。用 GNU 版：MSVC 版要靠 libcmt.lib 等导入库，
-          # 这些只在 Visual Studio 里（VCRedist、WindowsAppSDK 包里都没有），Linux 上凑不齐。
-          targets: x86_64-pc-windows-gnu
+          # 只装 GNU 目标：Linux 上没有 MSVC 的导入库（kernel32.lib 等），msvc 目标链接不过去；
+          # GNU 目标的导入库随 rust-std 一起给，安装包和免安装 exe 都用它交叉编。
+          targets: "x86_64-pc-windows-gnu"
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -287,7 +287,7 @@ jobs:
       - name: Build .deb
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.2.0.${GITHUB_RUN_NUMBER}"
+          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.2.1.${GITHUB_RUN_NUMBER}"
           bash packaging/deb/build.sh "$VERSION" amd64 "$PWD/dist"
       # Linux 上没有 Windows 的库，必须用 --no-bundle 先给出 target 目录，再只打 NSIS。
       # 两步分开是为了在注解里直接看到是哪一步失败（job 日志要管理员权限才拉得到）。
@@ -316,17 +316,23 @@ jobs:
       # tauri 自己会再跑一遍 cargo，而它默认把产物写到 target-tauri，和上面的
       # `cargo build --release --bins`（rust-cache 缓存的就是 target/）完全不是一份，
       # 等于整包重编一遍；这里显式指到同一目录复用缓存。
+      # 交叉编 Windows 目标只用 GNU（x86_64-pc-windows-gnu）：mingw 的导入库随 rust-std 一起给，
+      # 不需要在 Linux 上凑 Windows SDK 的 kernel32.lib 等（那些库只能从 msvc 的 Lib 包拿到，
+      # 26100/22621 的 desktop libs 包里都没有，xwin 也解析不了 26100 的清单——都试过了）。
       - name: Prepare Windows target
         shell: bash
         run: |
           set -o pipefail
           export CARGO_TARGET_DIR="$PWD/src-tauri/target"
-          cargo tauri build --target x86_64-pc-windows-gnu --no-bundle 2>&1 |
-            tee ../tauri-prep.log
-          status=${PIPESTATUS[0]}
+          export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
+          command -v x86_64-w64-mingw32-gcc || echo '::warning title=mingw::缺 gcc-mingw-w64-x86-64'
+          status=0
+          cargo build --locked --release --bins \
+            --manifest-path src-tauri/Cargo.toml \
+            --target x86_64-pc-windows-gnu 2>&1 | tee ../tauri-prep.log || status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            tail -n 30 ../tauri-prep.log | while IFS= read -r line; do
-              echo "::warning title=tauri build::${line:0:600}"
+            tail -n 40 ../tauri-prep.log | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error title=windows build::${line:0:900}"
             done
             exit "$status"
           fi
@@ -337,57 +343,33 @@ jobs:
           set -o pipefail
           export CARGO_TARGET_DIR="$PWD/src-tauri/target"
           export RUST_BACKTRACE=1
-          # 逐步排查交叉打包的 `No such file or directory (os error 2)`：
-          # 1) 不带 --ci 跑一遍（--ci 在 Linux 上会把 NSIS 输出的哈希警告变成上限 1 条的错误）
-          echo '=== attempt 1: without --ci ==='
-          run_bundle() {
-            cargo tauri bundle --bundles nsis "$@" --target x86_64-pc-windows-gnu 2>&1 |
-              tee ../tauri-nsis.log
-            return ${PIPESTATUS[0]}
-          }
-          if run_bundle; then
-            echo 'attempt 1 ok'
-          else
-            echo "attempt 1 failed: $?"
-            echo '=== staged bundle inputs ==='
-            find src-tauri/target/bundle -maxdepth 5 2>/dev/null | head -40 || true
-            echo '=== NSIS cache ==='
-            ls -laR "$HOME/.cache/tauri/NSIS" 2>&1 | head -60 || true
-            echo '=== bundle output dirs ==='
-            find src-tauri/target/x86_64-pc-windows-gnu/release/bundle -maxdepth 4 2>/dev/null | head -40 || true
-            echo '=== attempt 2: registry NSIS_PATH ==='
-            registr=$(find "$HOME/.cargo/registry/src" -maxdepth 2 -type d -name 'registry.nsis-*' 2>/dev/null | head -1)
-            echo "registry nsis: ${registr:-none}"
-            find "$HOME/.cargo/registry/src" -maxdepth 4 -type d -path '*registry.nsis*' -name '*x86-64*' 2>/dev/null | head -5 || true
-            if [ -n "$registr" ] && [ -d "$registr/nsis-3.13" ]; then
-              export NSIS_PATH="$registr/nsis-3.13"
-              echo "NSIS_PATH=$NSIS_PATH"
-              run_bundle && echo 'attempt 2 ok'
-            fi
-            echo '=== attempt 3: --ci again ==='
-            run_bundle --ci && echo 'attempt 3 ok'
+          export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
+          # 安装包也走 GNU 目标：同一份产物既做免安装 exe 又装进 NSIS 包里，
+          # 避免 msvc 交叉链接要 Windows SDK 导入库（拿不到）的问题。
+          status=0
+          cargo tauri bundle --bundles nsis --ci --target x86_64-pc-windows-gnu 2>&1 |
+            tee ../tauri-nsis.log || status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            tail -n 40 ../tauri-nsis.log | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::warning title=nsis bundle::${line:0:900}"
+            done
           fi
-          # 这里始终以 0 退出：三次尝试都失败时只把日志留下，由下一步 Decide 决定是否放弃安装包。
-          exit 0
-
-      - name: Upload bundle log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-installer-log
-          path: tauri-nsis.log
-          if-no-files-found: ignore
-          retention-days: 7
 
       - name: Collect Windows installer
         run: |
           mkdir -p dist
-          src=$(ls src-tauri/target/x86_64-pc-windows-gnu/release/bundle/nsis/*-setup.exe 2>/dev/null | head -1)
+          gnu=src-tauri/target/x86_64-pc-windows-gnu/release
+          src=$(ls "$gnu"/bundle/nsis/*-setup.exe 2>/dev/null | head -1)
           if [ -z "$src" ]; then
             echo "::warning title=no installer::交叉打包没产出 setup.exe，见 windows-installer-log 产物"
-            exit 0
+          else
+            cp "$src" "dist/bluetooth-input-bridge-${GITHUB_REF_NAME#v}-windows-x64-setup.exe"
           fi
-          cp "$src" "dist/bluetooth-input-bridge-${GITHUB_REF_NAME#v}-windows-x64-setup.exe"
+          if [ -f "$gnu/bluetooth-input-desktop.exe" ]; then
+            cp "$gnu/bluetooth-input-desktop.exe" "dist/bluetooth-input-bridge-${GITHUB_REF_NAME#v}-windows-x64-portable.exe"
+          else
+            echo "::warning title=no portable::没有产出免安装 exe"
+          fi
           ls -l dist
 
       - name: Upload Windows installer
@@ -426,7 +408,7 @@ jobs:
       - name: Build package
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.2.0.${GITHUB_RUN_NUMBER}"
+          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.2.1.${GITHUB_RUN_NUMBER}"
           workdir="$GITHUB_WORKSPACE/desktop/packaging/arch"
           sed -i "s/^pkgver=.*/pkgver=$VERSION/" "$workdir/PKGBUILD"
           useradd -m builder
@@ -516,8 +498,8 @@ jobs:
     name: Release
     # 永远跑：Windows 安装包那一步挂掉也不该把 apk、Linux 包、LÖVE 包一起扣下。
     if: always() && startsWith(github.ref, 'refs/tags/v')
-    # 不列 desktop-deb：它的产物是 .deb 和 Windows 安装包，失败时不该挡住 apk / Linux / LÖVE 的发布。
-    needs: [android, desktop, desktop-arch, love, windows]
+    # desktop-deb 里还交叉编了 Windows 的免安装 exe（.deb 也在这里），它挂掉只是少这两个文件。
+    needs: [android, desktop, desktop-deb, desktop-arch, love, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

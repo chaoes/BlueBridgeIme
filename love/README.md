@@ -30,7 +30,7 @@ love love/
 打包：
 
 ```sh
-./package.sh 0.2.0 dist [Linux 服务二进制路径] [Windows 二进制目录]
+./package.sh 0.2.1 dist [Linux 服务二进制路径] [Windows 二进制目录]
 ```
 
 脚本会下载官方 LÖVE 11.5 运行时（不修改），把 `.love` 附加到 Windows 的 `love.exe`、

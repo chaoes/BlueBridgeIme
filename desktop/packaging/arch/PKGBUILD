@@ -1,7 +1,7 @@
 # Maintainer: chao <chao@users.noreply.github.com>
 # Build with: makepkg -f   (run as a normal user, inside this directory)
 pkgname=bluetooth-input-bridge
-pkgver=0.2.0
+pkgver=0.2.1
 pkgrel=1
 pkgdesc="Type on your phone, get the text on this computer over Bluetooth"
 arch=('x86_64')
