@@ -358,12 +358,22 @@ jobs:
           for msi in sdk-headers-x86.msi sdk-libs-x64.msi ucrt.msi; do
             7z x -y -o"$SDK_ROOT/sdk" "$SDK_ROOT/$msi" > /dev/null
           done
+          rm -rf "$SDK_ROOT/crt-tmp"
           for vsix in crt-x64.vsix crt-headers.vsix; do
             7z x -y -o"$SDK_ROOT/crt-tmp" "$SDK_ROOT/$vsix" > /dev/null
-            crt_dir=$(find "$SDK_ROOT/crt-tmp" -type d -path '*/VC/Tools/MSVC/*' | head -n 1)
-            cp -r "$crt_dir/lib" "$SDK_ROOT/crt/"
-            cp -r "$crt_dir/include" "$SDK_ROOT/crt/"
           done
+          # CRT.x64.Desktop.base.vsix 只有 lib\<arch>，头文件在 CRT.Headers.base.vsix 里；
+          # 两个包的布局不完全一样，直接按目录名找。
+          mkdir -p "$SDK_ROOT/crt"
+          crt_lib=$(find "$SDK_ROOT/crt-tmp" -type d -path '*/lib/x64' | head -n 1)
+          crt_inc=$(find "$SDK_ROOT/crt-tmp" -type d -name include | head -n 1)
+          if [ -z "$crt_lib" ] || [ -z "$crt_inc" ]; then
+            echo "::error title=Windows SDK::CRT 包里找不到 lib/x64 或 include"
+            find "$SDK_ROOT/crt-tmp" -maxdepth 1 -type d
+            exit 1
+          fi
+          cp -r "$crt_lib" "$SDK_ROOT/crt/"
+          cp -r "$crt_inc" "$SDK_ROOT/crt/"
           # rust-lld 只认放着 *.lib 的那一级：SDK 的 um/x64、ucrt/x64、CRT 的 x64 分别交给它。
           SDK_UM="$SDK_ROOT/sdk/developers/Lib/x64/um/x64"
           SDK_UCRT="$SDK_ROOT/sdk/developers/Lib/x64/ucrt/x64"
