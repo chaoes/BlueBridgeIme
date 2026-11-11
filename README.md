@@ -30,12 +30,13 @@
 3. 手机与电脑先在「Windows 设置 → 蓝牙和设备」里配对一次；打开手机 App，选中这台电脑即可开始打字。
 4. 想让它常驻，可在界面里打开「服务注册」「开机自启」两个开关。
 
-> 发布页里 Windows 一共有三种形态，任选其一：
-> - `bluetooth-input-bridge-love-0.2.1-windows-x86_64.zip`：LÖVE 轻量前端，自带服务与 socket 转接，免安装，**推荐**。
-> - `bluetooth-input-bridge-0.2.1-windows-x64-setup.exe`：NSIS 安装包，装到 `Program Files` 并写注册表，可卸载。
-> - `bluetooth-input-bridge-0.2.1-windows-x64-portable.exe`：界面 + 服务二合一的免安装 exe，配合任意目录里的 `bluetooth-input-bridge-socket.exe` 也能用；不带 LÖVE 运行时。
+> Windows 现在只有一种推荐形态：`bluetooth-input-bridge-love-0.2.1-windows-x86_64.zip`
+> （LÖVE 轻量前端，自带服务与 socket 转接，免安装、不需要管理员权限）。包未做代码签名，
+> Windows 第一次运行可能提示「已保护你的电脑」，选「更多信息 → 仍要运行」即可。
 >
-> 三者都在 CI 里由 Ubuntu runner 交叉打包，未做代码签名，Windows 第一次运行可能提示「已保护你的电脑」，选「更多信息 → 仍要运行」即可。
+> NSIS 安装包与界面+服务二合一的免安装 exe 还在修（Linux 上交叉打包 NSIS 走不通，GNU 目标的
+> 免安装 exe 在真机上启动异常，见 [issue #2](https://github.com/chaoes/BlueBridgeIme/issues/2) 与 [issue #4](https://github.com/chaoes/BlueBridgeIme/issues/4)）；
+> 在那之前 Tauri 界面请用 Windows 上原生 `cargo build --release` 编出来的产物。
 
 ## 已支持的平台
 
@@ -43,7 +44,7 @@
 | --- | --- | --- |
 | Android 8.0+（API 26+） | ✅ 支持 | 手机端，需要经典蓝牙（非 BLE） |
 | Linux x86_64（BlueZ + GNOME Wayland） | ✅ 支持 | 桌面端，含无界面服务与开机自启；提供 .deb、Arch 包与免安装 tarball，另有自带服务的 LÖVE 包 |
-| Windows 10/11 x64 | ✅ 支持 | 桌面端，Win32 蓝牙 RFCOMM + SendInput 直输（不经过剪贴板），含无界面服务与开机自启；发布页提供 LÖVE 包（推荐，免安装）、NSIS 安装包与免安装 exe，均由 Linux 交叉打包 |
+| Windows 10/11 x64 | ✅ 支持 | 桌面端，Win32 蓝牙 RFCOMM + SendInput 直输（不经过剪贴板），含无界面服务与开机自启；发布页提供 LÖVE 包（免安装，自带服务），Tauri 界面可在 Windows 上原生编译 |
 | macOS | ❌ 未支持 | 仅提供 LÖVE 界面包（`love/`），无服务后端 |
 
 ## 目录
