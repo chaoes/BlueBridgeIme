@@ -498,8 +498,8 @@ jobs:
     name: Release
     # 永远跑：Windows 安装包那一步挂掉也不该把 apk、Linux 包、LÖVE 包一起扣下。
     if: always() && startsWith(github.ref, 'refs/tags/v')
-    # 不列 desktop-deb：它的产物是 .deb 和 Windows 安装包，失败时不该挡住 apk / Linux / LÖVE 的发布。
-    needs: [android, desktop, desktop-arch, love, windows]
+    # desktop-deb 里还交叉编了 Windows 的免安装 exe（.deb 也在这里），它挂掉只是少这两个文件。
+    needs: [android, desktop, desktop-deb, desktop-arch, love, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
