@@ -445,13 +445,9 @@ jobs:
           workspaces: desktop/src-tauri -> target
 
       # 安装包（NSIS）改在 linux 的 Debian 作业里打，Windows 这里只负责编译与自检。
-      # install-action 没有 tauri-cli 的预编译包时会退回到 cargo-binstall，再退回到源码编译，
-      # 一次要十几分钟；直接下官方 release 的二进制，几秒钟的事。
-      - name: Set up Tauri CLI
-        uses: taiki-e/install-action@v2
-        with:
-          tool: tauri-cli@2
-
+      # 本作业只做原生编译与单测自检，不打包（NSIS 在 Debian 作业里交叉打），
+      # 不需要 tauri-cli；别在这里装——install-action 的 bash 包装层在 windows 镜像上
+      # 会启动失败（partner-runner-images#169），把整个 job 卡红。
       - name: Build binaries
         run: cargo build --locked --release --manifest-path src-tauri/Cargo.toml --bins
 
