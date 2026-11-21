@@ -61,7 +61,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GetWindow, GetWindowLongW,
     GetWindowTextW, GetWindowThreadProcessId, IsIconic, GA_ROOT, GUITHREADINFO, GWL_STYLE,
-    GW_HWNDNEXT, WS_CHILD,
+    GW_HWNDNEXT,
 };
 
 /// 判定预算：一次 `resolve_target`（含全部本地查询）必须在这个时间内完成。
@@ -345,22 +345,23 @@ pub fn is_secure_surface(snap: &FocusSnapshot) -> bool {
 /// 1. 焦点窗口存在且 `GetAncestor(hwndFocus, GA_ROOT)` 就是前台窗口——否则焦点在
 ///    别的顶级窗口里（典型：输入法候选窗/离屏 IME 辅助窗口持有 `hwndFocus`），
 ///    `SendInput` 的字符会投给那个窗口，输入框里一个字节都不会出现；
-/// 2. 焦点窗口自己不是 `WS_CHILD`（即焦点在顶级窗口自身上，没有子输入框）。
+/// 2. 满足 1 即放行，**不再看 `WS_CHILD`**。v0.2.1 在这里有个方向写反的比较
+///    （`style & WS_CHILD == 0`），实际效果与注释意图相反：
+///    - 放行了“焦点在顶层窗口”——这正是浏览器类应用的真实形态（Chromium/Electron
+///      不给子控件 Win32 焦点，`hwndFocus` 就是 `Chrome_WidgetWin_1` 顶层本身），
+///      实测 `SendInput` 字符能进网页输入框，所以这条“误放行”其实是必要的；
+///    - 拒绝了“焦点在子输入框”（EDIT/Scintilla 等经典 Win32 应用）与 UWP 的
+///      `Windows.UI.Core.CoreWindow`（系统设置等 XAML 应用的输入面，带 `WS_CHILD`），
+///      实测（2026-11-21，probe_focus）Notepad3 在 v0.2.1 下会被误报
+///      「当前窗口不在输入状态」。这两类恰恰是用户点进输入框后的正常形态。
 ///
-/// 误拒风险最大的一条是 1：应用弹出菜单/工具栏时可能把焦点留在自己的顶级窗口，
-/// 而根窗口仍是前台窗口，因此不受影响；只有“焦点属于另一个顶级窗口”才拒绝。
-///
-/// 跨进程的“目标线程正在等待输入”检查留到 [`resolve_target`]：那里有时限。
+/// IME 候选窗/离屏辅助窗口的误放行风险由判据 1 完整覆盖：它们是独立顶级窗口，
+/// `GA_ROOT` 不等于前台窗口，会被拒绝。
 pub fn receives_keyboard_input(snap: &FocusSnapshot) -> bool {
     if !snap.has_focus() {
         return false;
     }
-    if snap.hwnd_root != snap.hwnd_foreground {
-        return false;
-    }
-    // 焦点窗口本身是子窗口时（正常输入框），根窗口必然等于前台窗口；这里只处理
-    // “焦点就在顶层窗口上”的情况——它不接收字符消息，保守拒绝。
-    window_style(snap.hwnd_focus) & WS_CHILD.0 == 0
+    snap.hwnd_root == snap.hwnd_foreground
 }
 
 /// 前台线程是否正处在“自己的模态输入循环”里（`hwndCapture` 指向的不是焦点窗口）。
@@ -827,6 +828,45 @@ mod tests {
     #[test]
     fn modifier_keys_match_expected_vks() {
         assert_eq!(MODIFIER_KEYS, [0x10, 0x11, 0x12, 0x5B, 0x5C]);
+    }
+
+    #[test]
+    fn receives_keyboard_input_accepts_child_control_focus() {
+        // 经典 Win32 应用（Notepad3/EDIT/Scintilla…）：焦点在子输入控件上。
+        // v0.2.1 的 WS_CHILD 判定方向写反，会误拒这一类；现在必须放行。
+        // （快照用编造句柄：window_class/window_style 查不到即返回空串/0，不影响判定。）
+        assert!(
+            receives_keyboard_input(&snap(0x100, 0x101)),
+            "子输入框焦点必须放行"
+        );
+    }
+
+    #[test]
+    fn receives_keyboard_input_accepts_top_level_focus() {
+        // 浏览器类（Chromium/Electron）：不给子控件 Win32 焦点，hwndFocus 就是
+        // 顶层窗口本身（根窗口==前台窗口）。实测 SendInput 能进网页输入框，放行。
+        let mut top = snap(0x100, 0x100);
+        top.hwnd_root = 0x100;
+        assert!(
+            receives_keyboard_input(&top),
+            "顶层窗口自身持焦点（浏览器形态）必须放行"
+        );
+    }
+
+    #[test]
+    fn receives_keyboard_input_rejects_focus_in_another_root() {
+        // IME 候选窗/离屏辅助窗口持有焦点：根窗口 != 前台窗口，拒绝。
+        let mut other_root = snap(0x100, 0x101);
+        other_root.hwnd_root = 0x200;
+        assert!(
+            !receives_keyboard_input(&other_root),
+            "焦点在别的顶级窗口必须拒绝"
+        );
+    }
+
+    #[test]
+    fn receives_keyboard_input_rejects_missing_focus() {
+        assert!(!receives_keyboard_input(&snap(0x100, 0)));
     }
 
     #[test]
