@@ -21,16 +21,16 @@
 - **输入注入**：Linux Wayland 下用 `wl-copy` 写剪贴板 + `/dev/uinput` 虚拟键盘发 Ctrl+V，粘贴后还原原剪贴板；Windows 下用 `SendInput` + `KEYEVENTF_UNICODE` 把字符事件直接送进前台焦点控件，不碰剪贴板。
 - **进程间通信**：桌面端界面 ↔ 服务，Linux 走 `$XDG_RUNTIME_DIR` 下的 Unix socket、Windows 走命名管道 `\\.\pipe\bluetooth-input-bridge-control`，同为 JSON 行协议，状态订阅推送。LÖVE 前端（Lua）只会连 Unix socket，因此在 Windows 上附带 `bluetooth-input-bridge-socket.exe` 做管道 ↔ socket 的双向转发。
 - **构建与 CI**：Gradle、Cargo、GitHub Actions（APK、Linux 二进制、Linux 的 .deb、Arch 包、LÖVE 三平台包、Windows 安装包与免安装 exe，可选发布签名）。Windows 侧的全部产物都在 Ubuntu runner 上交叉编译：安装包用 `x86_64-pc-windows-msvc` + `rust-lld`，免安装 exe 用 `x86_64-pc-windows-gnu` + mingw-w64。
-- **版本**：当前为 `0.2.1`，Windows 后端与双平台 LÖVE 前端正式合并进 `main` 的版本（`0.2.0` 是首个同时支持 Linux 与 Windows 的 LÖVE 前端版本）。
+- **版本**：当前为 `0.2.2`，修复 Windows 焦点判定方向写反（系统设置搜索框、经典子控件输入框被误拒）（`0.2.1` 是 Windows 后端与双平台 LÖVE 前端正式合并进 `main` 的版本，`0.2.0` 是首个同时支持 Linux 与 Windows 的 LÖVE 前端版本）。
 
 ## 快速开始（Windows）
 
-1. 下载发布页里的 `bluetooth-input-bridge-love-0.2.1-windows-x86_64.zip`，解压到任意目录（不需要管理员权限）。
+1. 下载发布页里的 `bluetooth-input-bridge-love-0.2.2-windows-x86_64.zip`，解压到任意目录（不需要管理员权限）。
 2. 双击 `BlueBridgeIme.exe`。界面连不上服务时会自己在后台拉起 `bluetooth-input-bridge-service.exe` 与 `bluetooth-input-bridge-socket.exe`，退出时一起关掉。
 3. 手机与电脑先在「Windows 设置 → 蓝牙和设备」里配对一次；打开手机 App，选中这台电脑即可开始打字。
 4. 想让它常驻，可在界面里打开「服务注册」「开机自启」两个开关。
 
-> Windows 现在只有一种推荐形态：`bluetooth-input-bridge-love-0.2.1-windows-x86_64.zip`
+> Windows 现在只有一种推荐形态：`bluetooth-input-bridge-love-0.2.2-windows-x86_64.zip`
 > （LÖVE 轻量前端，自带服务与 socket 转接，免安装、不需要管理员权限）。包未做代码签名，
 > Windows 第一次运行可能提示「已保护你的电脑」，选「更多信息 → 仍要运行」即可。
 >
